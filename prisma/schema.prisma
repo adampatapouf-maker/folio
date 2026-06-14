@@ -1,0 +1,252 @@
+// Folio — prepared database schema.
+//
+// PostgreSQL is the target connector (native enums + JSON). Point
+// DATABASE_URL at a local or managed Postgres instance.
+// The models mirror the app's domain: users + subscriptions (free/premium),
+// the market asset universe with fundamentals, user portfolios/holdings,
+// academy progress, AI chat history, the saved builder result, and social.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Users & subscription
+// ---------------------------------------------------------------------------
+
+enum Plan {
+  free
+  premium
+}
+
+enum Theme {
+  light
+  dark
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  name          String?
+  plan          Plan           @default(free)
+  theme         Theme          @default(light)
+  xp            Int            @default(0)
+  onboardedAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  portfolio     Portfolio?
+  chatMessages  ChatMessage[]
+  quizAnswers   QuizAnswer[]
+  builderResult BuilderResult?
+  posts         DiscussPost[]
+  watchlist     WatchlistItem[]
+  subscription  Subscription?
+}
+
+model Subscription {
+  id                   String    @id @default(cuid())
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId               String    @unique
+  plan                 Plan      @default(premium)
+  status               String    @default("active") // active | canceled | past_due
+  provider             String    @default("stripe")
+  externalCustomerId   String?
+  externalSubscription String?
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Market data
+// ---------------------------------------------------------------------------
+
+enum AssetKind {
+  etf
+  stock
+  etc
+  crypto
+}
+
+model Asset {
+  sym       String     @id
+  name      String
+  category  String
+  kind      AssetKind
+  score     Int        // Folio AI score 0–100
+  risk      String
+  price     Float
+  chg       Float
+  currency  String?
+  ter       String?
+  why       String?
+
+  // Optional valuation/quality metrics (nullable across asset kinds)
+  pe        Float?
+  ps        Float?
+  divY      Float?
+  roe       Float?
+  mcap      String?
+  low52     Float?
+  high52    Float?
+
+  fundamentals Fundamentals?
+  priceBars    PriceBar[]
+  news         AssetNews[]
+  holdings     Holding[]
+  watchedBy    WatchlistItem[]
+  updatedAt    DateTime       @default(now()) @updatedAt
+}
+
+model Fundamentals {
+  sym     String  @id
+  asset   Asset   @relation(fields: [sym], references: [sym], onDelete: Cascade)
+  // Stored as JSON to accommodate the heterogeneous metric sets per asset kind.
+  data    Json
+}
+
+model PriceBar {
+  id     String   @id @default(cuid())
+  sym    String
+  asset  Asset    @relation(fields: [sym], references: [sym], onDelete: Cascade)
+  t      DateTime
+  open   Float
+  high   Float
+  low    Float
+  close  Float
+  volume Float?
+
+  @@index([sym, t])
+}
+
+model AssetNews {
+  id        String   @id @default(cuid())
+  sym       String
+  asset     Asset    @relation(fields: [sym], references: [sym], onDelete: Cascade)
+  tag       String
+  title     String
+  body      String
+  publishedLabel String
+  createdAt DateTime @default(now())
+
+  @@index([sym])
+}
+
+// ---------------------------------------------------------------------------
+// User portfolio
+// ---------------------------------------------------------------------------
+
+model Portfolio {
+  id        String    @id @default(cuid())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String    @unique
+  name      String    @default("Moje portfolio")
+  holdings  Holding[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Holding {
+  id          String    @id @default(cuid())
+  portfolio   Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  portfolioId String
+  asset       Asset     @relation(fields: [sym], references: [sym])
+  sym         String
+  units       Float
+  avgPrice    Float
+  category    String
+
+  @@unique([portfolioId, sym])
+}
+
+model WatchlistItem {
+  id      String @id @default(cuid())
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId  String
+  asset   Asset  @relation(fields: [sym], references: [sym])
+  sym     String
+  addedAt DateTime @default(now())
+
+  @@unique([userId, sym])
+}
+
+// ---------------------------------------------------------------------------
+// AI, academy & builder
+// ---------------------------------------------------------------------------
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  role      String   // user | ai
+  text      String
+  widget    String?
+  attachments Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model QuizAnswer {
+  id         String   @id @default(cuid())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  questionId String
+  topic      String
+  correct    Boolean
+  answeredAt DateTime @default(now())
+
+  @@unique([userId, questionId])
+}
+
+model BuilderResult {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String   @unique
+  profile   String
+  score     Int
+  answers   Json
+  result    Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Social & calendar
+// ---------------------------------------------------------------------------
+
+model DiscussPost {
+  id        String   @id @default(cuid())
+  author    User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  authorId  String?
+  handle    String
+  avatar    String
+  verified  Boolean  @default(false)
+  sym       String?
+  text      String
+  likes     Int      @default(0)
+  comments  Int      @default(0)
+  reposts   Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model CalendarEvent {
+  id        String   @id @default(cuid())
+  date      String
+  type      String   // earnings | exdiv | divpay | rate
+  title     String
+  subtitle  String
+  time      String
+  impact    Int
+  sym       String?
+  bank      String?
+  meta      Json?
+}
