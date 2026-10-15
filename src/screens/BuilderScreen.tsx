@@ -64,7 +64,15 @@ function BuilderResult() {
   const openAsset = useFolioStore((s) => s.openAsset);
   const askAI = useFolioStore((s) => s.askAI);
   const go = useFolioStore((s) => s.go);
+  const strategy = useFolioStore((s) => s.strategy);
+  const adoptBuilderResult = useFolioStore((s) => s.adoptBuilderResult);
+  const setReportTab = useFolioStore((s) => s.setReportTab);
   const r = computeBuilder(answers);
+  const active = strategy.name === r.name && JSON.stringify(strategy.alloc) === JSON.stringify(r.alloc);
+  const showPlan = () => {
+    setReportTab("monthly");
+    go("report");
+  };
 
   const Block = ({ title, emo, data }: { title: string; emo: string; data: Allocation }) => (
     <div className="card" style={{ padding: 20 }}>
@@ -124,6 +132,29 @@ function BuilderResult() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="card" style={{ padding: 16, marginBottom: 18, display: "flex", alignItems: "center", gap: 12, border: active ? "1px solid var(--lime)" : undefined }}>
+        <div style={{ width: 40, height: 40, borderRadius: 12, background: active ? "var(--lime)" : "var(--surface2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 18 }}>
+          {active ? "✓" : "🎯"}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 800, fontSize: 14.5 }}>{active ? `${r.name} je tvoje strategie` : `Nastavit ${r.name} jako moji strategii`}</div>
+          <div style={{ fontSize: 12.5, color: "var(--ink2)", lineHeight: 1.45 }}>
+            {active
+              ? "Report, plán příkupu i Folio AI s ní teď počítají."
+              : `Teď máš „${strategy.name}". Report a plán příkupu se přepočítají podle nové alokace.`}
+          </div>
+        </div>
+        {active ? (
+          <button onClick={showPlan} className="pressable" style={{ background: "var(--panel)", color: "var(--lime)", fontWeight: 800, fontSize: 12.5, padding: "10px 12px", borderRadius: 11, flexShrink: 0 }}>
+            Plán →
+          </button>
+        ) : (
+          <button onClick={adoptBuilderResult} className="pressable" style={{ background: "var(--lime)", color: "var(--inkfix)", fontWeight: 800, fontSize: 12.5, padding: "10px 12px", borderRadius: 11, flexShrink: 0 }}>
+            Nastavit
+          </button>
+        )}
       </div>
 
       <div className="grid two" style={{ alignItems: "start", marginBottom: 18 }}>

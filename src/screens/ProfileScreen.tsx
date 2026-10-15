@@ -1,8 +1,7 @@
 "use client";
 import { useFolioStore } from "@/store/useFolioStore";
-import { pfCompute, defaultHoldings } from "@/lib/calc/portfolio";
+import { usePortfolioInsights } from "@/hooks/useInsights";
 import { fmt } from "@/lib/format";
-import { STRAT } from "@/data/portfolio";
 import { Icon } from "@/components/ui/Icon";
 import type { ReactNode } from "react";
 
@@ -66,7 +65,7 @@ export function ProfileScreen() {
   const resetState = useFolioStore((s) => s.resetState);
   const showToast = useFolioStore((s) => s.showToast);
 
-  const p = pfCompute(defaultHoldings());
+  const { p, strategy } = usePortfolioInsights();
   const isPrem = plan === "premium";
   const dark = theme === "dark";
   const lvl = Math.floor(xp / 100) + 1;
@@ -97,7 +96,7 @@ export function ProfileScreen() {
             <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
               <span className="chip" style={{ background: "rgba(255,255,255,.12)", color: "#fff" }}>⭐ Úroveň {lvl}</span>
               <span className="chip" style={{ background: "rgba(255,255,255,.12)", color: "#fff" }}>{xp} XP</span>
-              <span className="chip" style={{ background: "rgba(255,255,255,.12)", color: "#fff" }}>{STRAT.name} profil</span>
+              <span className="chip" style={{ background: "rgba(255,255,255,.12)", color: "#fff" }}>🎯 {strategy.name}</span>
             </div>
           </div>
         </div>
@@ -108,7 +107,7 @@ export function ProfileScreen() {
         <Stat emo="💼" val={fmt(p.val)} lab="Portfolio" />
         <Stat emo="📈" val={(p.plPct >= 0 ? "+" : "") + p.plPct.toFixed(1) + "%"} lab="Zhodnocení" />
         <Stat emo="🎓" val={"Úr. " + lvl} lab="Akademie" />
-        <Stat emo="🔥" val={String(answered.length)} lab="Kvízů" />
+        <Stat emo="✅" val={String(answered.length)} lab="Odpovědí" />
       </div>
 
       {/* account */}
@@ -120,6 +119,13 @@ export function ProfileScreen() {
           sub="Jméno, e-mail, telefon"
           right={<Icon name="chevR" size={16} color="var(--ink3)" />}
           onClick={() => showToast("Osobní údaje — v demu needitovatelné", "👤")}
+        />
+        <Row
+          icon={<Icon name="sparkles" size={18} color="var(--limedeep)" stroke={2} />}
+          title={`Strategie: ${strategy.name}`}
+          sub={`${strategy.risk} · očekávaný výnos ${strategy.ret}`}
+          right={<Icon name="chevR" size={16} color="var(--ink3)" />}
+          onClick={startBuilder}
         />
         <Row
           icon={<Icon name="wallet" size={18} color="var(--blue)" stroke={2} />}
@@ -138,7 +144,7 @@ export function ProfileScreen() {
         <Row
           icon={<Icon name="trophy" size={18} color="var(--amber)" stroke={2} />}
           title="Můj profil rizika"
-          sub={STRAT.name + " · " + STRAT.risk}
+          sub={strategy.name + " · " + strategy.risk}
           right={
             <button onClick={() => startBuilder()} className="pressable" style={{ fontSize: 12, fontWeight: 800, color: "var(--limedeep)", background: "none" }}>
               Změnit

@@ -134,7 +134,7 @@ export function DiscussScreen() {
               }
             }}
             rows={1}
-            style={{ flex: 1, minWidth: 0, background: "var(--surface2)", border: "none", borderRadius: 20, padding: "11px 16px", fontSize: 13.5, color: "var(--ink)", outline: "none", resize: "none", fontFamily: "inherit" }}
+            style={{ flex: 1, minWidth: 0, background: "var(--surface2)", border: "none", borderRadius: 20, padding: "11px 16px", fontSize: 16, color: "var(--ink)", outline: "none", resize: "none", fontFamily: "inherit" }}
           />
           <button onClick={submit} className="pressable" style={{ background: "var(--lime)", color: "var(--inkfix)", fontWeight: 800, fontSize: 12.5, padding: "9px 16px", borderRadius: 11, flexShrink: 0 }}>
             Příspěvek

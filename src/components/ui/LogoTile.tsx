@@ -1,72 +1,55 @@
-"use client";
-import { useState } from "react";
-import { logoDomain, catColor, catEmoji } from "@/lib/assets";
 import { ASSETS } from "@/data/assets";
+import { catColor } from "@/lib/assets";
 import type { AssetCategory } from "@/lib/types";
 
-interface LogoTileProps {
-  sym: string;
-  size?: number;
-  radius?: number;
+interface TileProps {
+  label: string;
+  color: string;
+  size: number;
+  radius: number;
+  title?: string;
 }
 
-/**
- * Issuer/company logo chip (Clearbit) with a graceful fallback to the colored
- * category emoji tile. Mirrors the prototype's `logoTile()` + `logoErr()`.
- */
-export function LogoTile({ sym, size = 44, radius = 13 }: LogoTileProps) {
-  const [failed, setFailed] = useState(false);
-  const asset = ASSETS.find((x) => x.sym === sym);
-  const cat: AssetCategory = asset?.cat || "Akciové ETF";
-  const cc = catColor(cat);
-  const emo = catEmoji(cat);
-  const fs = Math.round(size * 0.46);
-  const domain = logoDomain(sym);
-
-  if (domain && !failed) {
-    return (
-      <div
-        className="logochip"
-        style={{
-          width: size,
-          height: size,
-          borderRadius: radius,
-          background: "#fff",
-          border: "1px solid rgba(0,0,0,.07)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          flexShrink: 0,
-          overflow: "hidden",
-          boxShadow: "0 3px 9px rgba(0,0,0,.10)",
-        }}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={`https://logo.clearbit.com/${domain}?size=80`}
-          alt=""
-          style={{ width: "74%", height: "74%", objectFit: "contain" }}
-          onError={() => setFailed(true)}
-        />
-      </div>
-    );
-  }
+/** Monogram tile: ticker letters on the category color. */
+function Monogram({ label, color, size, radius, title }: TileProps) {
+  const fs = Math.round(size * (label.length <= 2 ? 0.4 : label.length === 3 ? 0.32 : 0.26));
   return (
     <div
+      role="img"
+      aria-label={title ?? label}
       style={{
         width: size,
         height: size,
         borderRadius: radius,
-        background: `linear-gradient(135deg,${cc},${cc}cc)`,
+        background: `linear-gradient(140deg, ${color}, ${color}d0)`,
+        color: "#fff",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
         flexShrink: 0,
         fontSize: fs,
-        boxShadow: `0 4px 12px ${cc}55`,
+        fontWeight: 800,
+        letterSpacing: "-.02em",
+        boxShadow: `0 3px 10px ${color}40, inset 0 1px 0 rgba(255,255,255,.25)`,
       }}
     >
-      {emo}
+      {label}
     </div>
   );
+}
+
+/**
+ * Asset logo. Self-contained monogram — no third-party logo CDN (the Clearbit
+ * logo API the prototype used has been retired), so tiles render instantly,
+ * offline and without leaking which assets a user looks at.
+ */
+export function LogoTile({ sym, size = 44, radius = 13 }: { sym: string; size?: number; radius?: number }) {
+  const asset = ASSETS.find((x) => x.sym === sym);
+  const cat: AssetCategory = asset?.cat ?? "Akciové ETF";
+  return <Monogram label={sym.slice(0, 4)} color={catColor(cat)} size={size} radius={radius} title={asset?.name} />;
+}
+
+/** Central-bank tile for rate-decision events. */
+export function BankTile({ bank, size = 40, radius = 12 }: { bank: string; size?: number; radius?: number }) {
+  return <Monogram label={bank} color="#7B61FF" size={size} radius={radius} title={bank} />;
 }

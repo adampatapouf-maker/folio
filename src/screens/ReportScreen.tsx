@@ -1,229 +1,351 @@
 "use client";
-import { useState } from "react";
+import { useMemo } from "react";
 import { useFolioStore } from "@/store/useFolioStore";
-import { pfCompute, defaultHoldings, pfHistory } from "@/lib/calc/portfolio";
-import { STRAT } from "@/data/portfolio";
-import { CALENDAR, CAL_META, BANK_LOGO } from "@/data/calendar";
-import { CAT_COLOR } from "@/lib/assets";
+import { useReport } from "@/hooks/useInsights";
+import { CAL_META } from "@/data/calendar";
+import { catColor } from "@/lib/assets";
+import { DRIFT_BAND, type DriftRow } from "@/lib/insights/rebalance";
+import type { ActionKind, Report, ReportAction } from "@/lib/insights/report";
 import { fmt } from "@/lib/format";
 import { Icon } from "@/components/ui/Icon";
-import { LogoTile } from "@/components/ui/LogoTile";
-import { Donut, AreaChart } from "@/components/charts/Charts";
-import type { AssetCategory, CalendarType } from "@/lib/types";
+import { LogoTile, BankTile } from "@/components/ui/LogoTile";
+import { AllocationBars } from "@/components/ui/AllocationBars";
+import type { CalendarType } from "@/lib/types";
 
-interface Move {
-  label: string;
-  color: string;
-  bg: string;
-  asset: string;
-  text: string;
-  why: string[];
-}
+const KIND: Record<ActionKind, { label: string; bg: string; fg: string }> = {
+  buy: { label: "Doplnit", bg: "var(--lime)", fg: "var(--inkfix)" },
+  pause: { label: "Nenavyšovat", bg: "var(--coral)", fg: "#fff" },
+  hold: { label: "Držet", bg: "var(--purple)", fg: "#fff" },
+  watch: { label: "Sledovat", bg: "var(--amber)", fg: "var(--inkfix)" },
+};
 
-const REPORT_MOVES: Move[] = [
-  { label: "Zvážit navýšení", color: "var(--inkfix)", bg: "var(--lime)", asset: "Globální akciové ETF (VWCE)", text: "Pod cílovou váhou s pozitivním trendovým signálem. Většina měsíčního příkupu míří sem.", why: ["Kategorie je 8 % pod cílovou váhou", "Skóre aktiva: 78/100 (pozitivní)", "Cena nad SMA50 i SMA200"] },
-  { label: "Držet dle strategie", color: "#fff", bg: "var(--purple)", asset: "Dluhopisové ETF (AGGH)", text: "Neutrální trend, ale stabilizační role. Držet na strategické váze, nenavyšovat.", why: ["Na cílové váze", "Skóre: 55/100 (neutrální)", "Snižuje celkovou volatilitu portfolia"] },
-  { label: "Sledovat", color: "var(--inkfix)", bg: "var(--amber)", asset: "NVIDIA", text: "Zvýšená volatilita. Model nenavrhuje změnu, dokud se trh neustálí.", why: ["Implikovaná volatilita na 6měsíčním maximu", "Skóre: 72/100 (pozitivní)", "Vyšší riziko v krátkém období"] },
-  { label: "Nenavyšovat", color: "#fff", bg: "var(--coral)", asset: "Bitcoin", text: "Již na 3% limitu krypta pro vyváženou strategii. Model nepřidává nad limit.", why: ["Na limitu strategie pro krypto (3 %)", "Skóre: 35/100 (zvýšené riziko)", "Vysoký drawdown vůči ostatním kategoriím"] },
-];
+const signed = (n: number) => `${n >= 0 ? "+" : "−"}${Math.abs(n).toFixed(1).replace(".", ",")} %`;
+const dec = (n: number, dp = 1) => n.toFixed(dp).replace(".", ",");
 
-const MONTHLY_MOVES: Move[] = [
-  { label: "Rebalancovat ↑", color: "var(--inkfix)", bg: "var(--lime)", asset: "Akciová ETF — doplnit do cíle", text: "Po růstu trhu i tak zůstává akciová složka mírně pod 50% cílem. Měsíční příkup míří primárně sem.", why: ["Aktuální váha 46 % vs. cíl 50 %", "Dlouhodobé jádro portfolia", "Příkup levnější než prodej kvůli daním a poplatkům"] },
-  { label: "Rebalancovat ↓", color: "var(--inkfix)", bg: "var(--amber)", asset: "Růstové akcie — zafixovat zisk", text: "Růstová složka po silných měsících přerostla cíl. Model navrhuje nové příkupy sem nesměřovat.", why: ["Váha 13 % vs. cíl 10 %", "Po rebalancování klesá koncentrace rizika", "Zisk se „přelévá“ do podvážených tříd"] },
-  { label: "Plán příkupu", color: "#fff", bg: "var(--purple)", asset: "Pravidelná investice (DCA)", text: "Měsíční částku rozděl podle cílové strategie — viz plán rozdělení níže. Investuj bez ohledu na zprávy.", why: ["DCA dlouhodobě poráží časování trhu", "Automatické rozdělení drží disciplínu", "Snižuje riziko špatného načasování"] },
-  { label: "Horizont", color: "#fff", bg: "var(--coral)", asset: "Dlouhodobý pohled", text: "Měsíční pohled ignoruje denní šum. Klíčové je dodržet strategii a nechat složené úročení pracovat.", why: ["1 měsíc = šum, 10 let = signál", "Drž se zvolené alokace", "Přehodnocuj strategii max. 1–2× ročně"] },
-];
-
-/** Central bank logo chip (mirrors the prototype's bankLogo). */
-function BankLogo({ bank, size = 36 }: { bank: string; size?: number }) {
-  const [failed, setFailed] = useState(false);
-  const domain = BANK_LOGO[bank];
-  const fs = Math.round(size * 0.42);
-  if (domain && !failed) {
-    return (
-      <div style={{ width: size, height: size, borderRadius: 13, background: "#fff", border: "1px solid rgba(0,0,0,.07)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden", boxShadow: "0 3px 9px rgba(0,0,0,.1)" }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={`https://logo.clearbit.com/${domain}?size=80`} alt="" style={{ width: "72%", height: "72%", objectFit: "contain" }} onError={() => setFailed(true)} />
-      </div>
-    );
-  }
+function SectionTitle({ icon, children, action }: { icon: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
-    <div style={{ width: size, height: size, borderRadius: 13, background: "linear-gradient(135deg,#7B61FF,#7B61FFcc)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: fs, flexShrink: 0 }}>
-      🏦
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, margin: "22px 0 10px" }}>
+      <div className="h2" style={{ fontSize: 18, display: "flex", alignItems: "center", gap: 8 }}>
+        <span aria-hidden style={{ fontSize: 16 }}>{icon}</span>
+        {children}
+      </div>
+      {action}
     </div>
   );
 }
 
-function PremiumTeaser() {
-  const setPlan = useFolioStore((s) => s.setPlan);
-  const chips = ["💼 Dopad na portfolio", "🛡️ Rizikový profil", "🏭 Sektory", "📅 Co sledovat", "🤖 AI komentář"];
+function ActionCard({ a }: { a: ReportAction }) {
+  const reportWhy = useFolioStore((s) => s.reportWhy);
+  const toggleReportWhy = useFolioStore((s) => s.toggleReportWhy);
+  const openAsset = useFolioStore((s) => s.openAsset);
+  const k = KIND[a.kind];
+  const open = reportWhy === a.id;
   return (
-    <button onClick={() => setPlan("premium")} className="card lift" style={{ width: "100%", textAlign: "left", padding: 24, marginTop: 18, position: "relative", overflow: "hidden", background: "var(--panel)", color: "var(--panelink)" }}>
-      <div style={{ position: "absolute", top: -30, right: -30, width: 130, height: 130, borderRadius: "50%", background: "var(--lime)", opacity: 0.16 }} />
-      <div style={{ position: "relative" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-          <Icon name="sparkles" size={16} color="var(--lime)" stroke={2.3} />
-          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--lime)" }}>Premium report</span>
-        </div>
-        <div className="fd" style={{ fontSize: 22, fontWeight: 600, marginBottom: 8 }}>Odemkni celý report</div>
-        <div style={{ fontSize: 13.5, color: "rgba(255,255,255,.7)", lineHeight: 1.6, marginBottom: 16 }}>
-          Měsíční plán příkupu, dopad na <b>tvé</b> portfolio, rizikové metriky, sektorový výhled a dlouhý komentář Folio AI.
-        </div>
-        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 18 }}>
-          {chips.map((x) => (
-            <span key={x} className="chip" style={{ background: "rgba(255,255,255,.1)", color: "#fff" }}>{x}</span>
-          ))}
-        </div>
-        <span style={{ background: "var(--lime)", color: "var(--inkfix)", fontWeight: 800, fontSize: 13.5, padding: "12px 22px", borderRadius: 12, display: "inline-flex", alignItems: "center", gap: 6 }}>✦ Odemknout Premium</span>
+    <div className="card" style={{ padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <span className="tag" style={{ background: k.bg, color: k.fg }}>{k.label}</span>
+        {a.sym && (
+          <button onClick={() => openAsset(a.sym!)} className="pressable" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: "var(--ink2)" }}>
+            <LogoTile sym={a.sym} size={22} radius={6} /> {a.sym} <Icon name="chevR" size={13} color="var(--ink3)" />
+          </button>
+        )}
       </div>
-    </button>
+      <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>{a.subject}</div>
+      <div style={{ fontSize: 13.5, color: "var(--ink2)", lineHeight: 1.5 }}>{a.text}</div>
+      <button
+        onClick={() => toggleReportWhy(a.id)}
+        aria-expanded={open}
+        className="pressable"
+        style={{ marginTop: 10, display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 700, color: "var(--ink2)" }}
+      >
+        <Icon name="help" size={13} color="var(--ink2)" /> Proč?
+        <Icon name="chevD" size={13} color="var(--ink2)" style={{ transform: open ? "rotate(180deg)" : undefined, transition: "transform .2s" }} />
+      </button>
+      {open && (
+        <ul style={{ listStyle: "none", marginTop: 10, padding: 12, background: "var(--bg)", borderRadius: 12, display: "flex", flexDirection: "column", gap: 7 }}>
+          {a.why.map((w) => (
+            <li key={w} style={{ display: "flex", gap: 8, fontSize: 13, lineHeight: 1.45 }}>
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--ink3)", marginTop: 7, flexShrink: 0 }} />
+              {w}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
-function ReportExtras({ monthly }: { monthly: boolean }) {
-  const go = useFolioStore((s) => s.go);
-  const askAI = useFolioStore((s) => s.askAI);
-  const holdings = useFolioStore((s) => s.holdings) ?? defaultHoldings();
-  const p = pfCompute(holdings);
-  const ph = pfHistory(p.val);
-
-  const movers = [...p.rows].sort((a, b) => b.chg - a.chg);
-  const best = movers[0];
-  const worst = movers[movers.length - 1];
-
-  const metrics: [string, string, string][] = [
-    ["Volatilita (ann.)", "11,2 %", "#3D7BFF"],
-    ["Sharpe ratio", "1,34", "#CCFF00"],
-    ["Max. pokles", "−14 %", "#FF5A4E"],
-    ["Beta vs. trh", "0,92", "#7B61FF"],
-    ["Diverzifikace", "8 pozic", "#16C7C0"],
-    ["Cash buffer", "6 %", "#FF9F1C"],
-  ];
-
-  const sectors: [string, string, string, string][] = [
-    ["Technologie", "Pozitivní", "var(--limedeep)", "AI a cloud táhnou růst, valuace ale napjaté."],
-    ["Spotřební zboží", "Neutrální", "var(--amber)", "Defenzivní, stabilní marže, pomalejší růst."],
-    ["Finance", "Pozitivní", "var(--limedeep)", "Vyšší sazby podporují ziskovost bank."],
-    ["Dluhopisy", "Zlepšující se", "var(--blue)", "Očekávané snižování sazeb zvedá ceny."],
-  ];
-
-  const upcoming = CALENDAR.slice(0, 4);
-
-  const commentary = monthly
-    ? "Z měsíčního pohledu zůstává prostředí konstruktivní. Akciová jádra portfolia těží ze silných výsledků technologického sektoru, zatímco dluhopisová složka začíná opět plnit roli stabilizátoru, jak se trh přiklání k očekávání nižších sazeb. Doporučený postup je disciplinovaný: pokračovat v pravidelném příkupu podle plánu výše, vrátit přerostlé třídy k cílovým vahám a nereagovat na denní šum. Hlavní riziko měsíce představují rozhodnutí tří centrálních bank — případný jestřábí tón by mohl krátkodobě zvýšit volatilitu napříč třídami."
-    : "Tento týden potvrdil sílu širokého trhu — růst nebyl tažen jen úzkou skupinou titulů. Tvé portfolio z toho profitovalo zejména přes akciová ETF a růstovou složku. Krátkodobě sleduj zvýšenou volatilitu kolem výsledků NVIDIA a zasedání centrálních bank. Strategie se nemění: jádro drží, krypto zůstává na limitu, a případné nové prostředky míří do podvážených tříd.";
-
+function Hero({ r, eyebrow, title, children }: { r: Report; eyebrow: string; title: string; children?: React.ReactNode }) {
   return (
-    <>
-      {/* 1) portfolio impact */}
-      <div className="card" style={{ padding: 22, marginTop: 18 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-          <span style={{ fontSize: 18 }}>💼</span>
-          <div style={{ fontWeight: 800, fontSize: 15 }}>Dopad na tvé portfolio</div>
-        </div>
-        <div style={{ fontSize: 13.5, color: "var(--ink2)", lineHeight: 1.6, marginBottom: 16 }}>
-          Jak se {monthly ? "měsíc" : "týden"} propsal do tvých skutečných pozic. Hodnota portfolia je <b style={{ color: "var(--ink)" }}>{fmt(p.val)}</b> ({p.pl >= 0 ? "+" : ""}{p.plPct.toFixed(1)} %).
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-          <div style={{ height: 130, flex: 1, minWidth: 220 }}>
-            <AreaChart vals={ph.map((x) => x.v)} labels={ph.map((x) => x.m)} />
-          </div>
-          <div style={{ display: "flex", gap: 10, flex: 1, minWidth: 220 }}>
-            <div style={{ flex: 1, background: "var(--limesoft)", borderRadius: 13, padding: 13 }}>
-              <LogoTile sym={best.sym} size={30} radius={9} />
-              <div style={{ fontSize: 10, fontWeight: 800, color: "var(--ink2)", textTransform: "uppercase", marginTop: 8 }}>Nejlepší</div>
-              <div style={{ fontSize: 14, fontWeight: 800 }}>{best.sym}</div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: "var(--limedeep)" }}>+{best.chg.toFixed(1)}%</div>
-            </div>
-            <div style={{ flex: 1, background: "var(--coralsoft)", borderRadius: 13, padding: 13 }}>
-              <LogoTile sym={worst.sym} size={30} radius={9} />
-              <div style={{ fontSize: 10, fontWeight: 800, color: "var(--ink2)", textTransform: "uppercase", marginTop: 8 }}>Nejslabší</div>
-              <div style={{ fontSize: 14, fontWeight: 800 }}>{worst.sym}</div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: "var(--coral)" }}>{worst.chg.toFixed(1)}%</div>
-            </div>
-          </div>
-        </div>
+    <div style={{ background: "var(--grad-hero)", color: "var(--panelink)", borderRadius: 22, padding: 20, position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", top: -40, right: -40, width: 140, height: 140, borderRadius: "50%", background: "var(--lime)", opacity: 0.14 }} />
+      <div style={{ position: "relative" }}>
+        <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--lime)", marginBottom: 8 }}>{eyebrow}</div>
+        <div className="fd" style={{ fontSize: 23, fontWeight: 600, lineHeight: 1.2 }}>{title}</div>
+        <div style={{ fontSize: 13.5, lineHeight: 1.6, color: "var(--panelsub)", marginTop: 8 }}>{r.commentary}</div>
+        {children}
       </div>
+    </div>
+  );
+}
 
-      {/* 2) risk metrics dashboard */}
-      <div className="card" style={{ padding: 22, marginTop: 18 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-          <span style={{ fontSize: 18 }}>🛡️</span>
-          <div style={{ fontWeight: 800, fontSize: 15 }}>Rizikový profil portfolia</div>
+function MarketStrip({ r }: { r: Report }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginTop: 16, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,.12)" }}>
+      {r.market.map((m) => (
+        <div key={m.label} style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 9.5, opacity: 0.6, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.label}</div>
+          <div style={{ fontSize: 14, fontWeight: 800, marginTop: 2, color: m.change >= 0 ? "var(--lime)" : "var(--coral)" }}>{signed(m.change)}</div>
         </div>
-        <div className="grid three">
-          {metrics.map((m) => (
-            <div key={m[0]} style={{ background: "var(--surface2)", borderRadius: 13, padding: 14 }}>
-              <div style={{ fontSize: 10, fontWeight: 800, color: "var(--ink2)", textTransform: "uppercase", letterSpacing: ".04em" }}>{m[0]}</div>
-              <div className="fd" style={{ fontSize: 21, fontWeight: 600, marginTop: 3 }}>{m[1]}</div>
-              <div style={{ height: 4, background: "var(--line)", borderRadius: 2, marginTop: 8, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: "70%", background: m[2], borderRadius: 2 }} />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      ))}
+    </div>
+  );
+}
 
-      {/* 3) sector outlook */}
-      <div className="card" style={{ padding: 22, marginTop: 18 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 18 }}>🏭</span>
-          <div style={{ fontWeight: 800, fontSize: 15 }}>Sektorový výhled</div>
-        </div>
-        {sectors.map((s) => (
-          <div key={s[0]} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: "1px solid var(--line)" }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700 }}>{s[0]}</div>
-              <div style={{ fontSize: 11.5, color: "var(--ink2)" }}>{s[3]}</div>
-            </div>
-            <span className="chip" style={{ background: `color-mix(in srgb, ${s[2]} 12%, transparent)`, color: s[2] }}>{s[1]}</span>
+function RiskCard({ r }: { r: Report }) {
+  const k = r.risk;
+  const items: [string, string, string][] = [
+    ["Volatilita", `${dec(k.vol)} %`, "odhad ročního kolísání"],
+    ["Možný propad", `−${dec(k.maxDrawdown, 0)} %`, "vážený historický max."],
+    ["Beta", dec(k.beta, 2), "citlivost na trh"],
+    ["Největší pozice", `${k.largest.sym} ${dec(k.largest.weight, 0)} %`, "koncentrace"],
+    ["Krypto", `${dec(k.cryptoShare)} %`, `cíl ${r.drift.find((d) => d.cat === "Krypto")?.target ?? 0} %`],
+    ["Efektivní pozice", dec(k.effectivePositions), `z ${k.positions} držených`],
+  ];
+  return (
+    <div className="card" style={{ padding: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        {items.map(([label, v, sub]) => (
+          <div key={label} style={{ background: "var(--surface2)", borderRadius: 12, padding: 12, minWidth: 0 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: "var(--ink2)", textTransform: "uppercase", letterSpacing: ".04em" }}>{label}</div>
+            <div className="fd" style={{ fontSize: 19, fontWeight: 600, marginTop: 2, whiteSpace: "nowrap" }}>{v}</div>
+            <div style={{ fontSize: 11, color: "var(--ink3)" }}>{sub}</div>
           </div>
         ))}
       </div>
+      <div className="disc" style={{ marginTop: 10 }}>Odhad z historické volatility jednotlivých aktiv při korelaci 0,5. Není to předpověď.</div>
+    </div>
+  );
+}
 
-      {/* 4) calendar ahead */}
-      <div className="card" style={{ padding: 22, marginTop: 18 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 18 }}>📅</span>
-            <div style={{ fontWeight: 800, fontSize: 15 }}>Co sledovat příště</div>
-          </div>
-          <button onClick={() => go("calendar")} className="pressable" style={{ fontSize: 12, fontWeight: 800, color: "var(--limedeep)" }}>Celý kalendář →</button>
-        </div>
-        {upcoming.map((e) => {
+function Watchlist({ r }: { r: Report }) {
+  const go = useFolioStore((s) => s.go);
+  return (
+    <>
+      <SectionTitle icon="📅" action={<button onClick={() => go("calendar")} className="pressable" style={{ fontSize: 12, fontWeight: 800, color: "var(--limedeep)" }}>Kalendář →</button>}>
+        Co sledovat
+      </SectionTitle>
+      <div className="card" style={{ padding: "4px 16px" }}>
+        {r.watch.map((e, i) => {
           const m = CAL_META[e.type as CalendarType];
           return (
-            <div key={e.title} style={{ display: "flex", alignItems: "center", gap: 11, padding: "10px 0", borderBottom: "1px solid var(--line)" }}>
-              {e.type === "rate" && e.bank ? (
-                <BankLogo bank={e.bank} size={36} />
-              ) : e.sym ? (
-                <LogoTile sym={e.sym} size={36} radius={10} />
-              ) : (
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: m.color, display: "flex", alignItems: "center", justifyContent: "center" }}>{m.emoji}</div>
-              )}
+            <div key={e.title} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 0", borderTop: i ? "1px solid var(--line)" : "none" }}>
+              {e.type === "rate" && e.bank ? <BankTile bank={e.bank} size={34} radius={10} /> : e.sym ? <LogoTile sym={e.sym} size={34} radius={10} /> : <span style={{ fontSize: 22 }}>{m.emoji}</span>}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 700 }}>{e.title}</div>
-                <div style={{ fontSize: 11, color: "var(--ink2)" }}>{e.date} · {m.label}</div>
+                <div style={{ fontSize: 11.5, color: "var(--ink2)" }}>
+                  {e.date} · {m.label}
+                  {e.sym && r.portfolio.rows.some((x) => x.sym === e.sym) ? " · držíš" : ""}
+                </div>
               </div>
             </div>
           );
         })}
       </div>
+    </>
+  );
+}
 
-      {/* 5) AI commentary */}
-      <div style={{ background: "var(--panel)", color: "var(--panelink)", borderRadius: 20, padding: 24, marginTop: 18, position: "relative", overflow: "hidden" }}>
-        <div style={{ position: "absolute", top: -30, right: -30, width: 120, height: 120, borderRadius: "50%", background: "var(--lime)", opacity: 0.16 }} />
-        <div style={{ position: "relative" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <Icon name="sparkles" size={16} color="var(--lime)" />
-            <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--lime)" }}>Komentář Folio AI</span>
+/** Class weights after this month's contribution is invested per the plan. */
+function driftAfterPlan(r: Report): DriftRow[] {
+  const total = r.portfolio.val + r.plan.monthly;
+  return r.drift
+    .map((d) => {
+      const value = d.value + (r.plan.lines.find((l) => l.cat === d.cat)?.amount ?? 0);
+      const actual = total > 0 ? (value / total) * 100 : 0;
+      const drift = actual - d.target;
+      return { ...d, value, actual, drift, status: drift > DRIFT_BAND ? "over" : drift < -DRIFT_BAND ? "under" : "ok" } as DriftRow;
+    })
+    .sort((a, b) => Math.abs(b.drift) - Math.abs(a.drift));
+}
+
+function PlanList({ r }: { r: Report }) {
+  const openAsset = useFolioStore((s) => s.openAsset);
+  return (
+    <div className="card" style={{ padding: "6px 16px" }}>
+      {r.plan.lines.map((l, i) => (
+        <button
+          key={l.cat}
+          onClick={() => l.sym && openAsset(l.sym)}
+          className="pressable"
+          style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderTop: i ? "1px solid var(--line)" : "none", textAlign: "left" }}
+        >
+          <LogoTile sym={l.sym} size={38} radius={11} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 800 }}>
+              {l.sym} {!l.held && <span className="chip" style={{ background: "var(--surface2)", color: "var(--ink2)", padding: "1px 6px", fontSize: 9, marginLeft: 4 }}>nové</span>}
+            </div>
+            <div style={{ fontSize: 11.5, color: "var(--ink2)", display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 7, height: 7, borderRadius: 2, background: catColor(l.cat) }} />
+              {l.cat}
+            </div>
           </div>
-          <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "rgba(255,255,255,.9)" }}>{commentary}</div>
-          <button onClick={() => askAI("Vysvětli mi tento report")} className="pressable" style={{ marginTop: 16, background: "var(--lime)", color: "var(--inkfix)", fontSize: 12.5, fontWeight: 800, padding: "10px 16px", borderRadius: 11, display: "inline-flex", alignItems: "center", gap: 6 }}>
-            <Icon name="chat" size={13} color="var(--inkfix)" stroke={2.3} /> Zeptat se na detaily
-          </button>
+          <div style={{ textAlign: "right" }}>
+            <div className="fd" style={{ fontSize: 17, fontWeight: 600 }}>{fmt(l.amount)}</div>
+            <div style={{ fontSize: 11, color: "var(--ink3)" }}>{Math.round((l.amount / Math.max(1, r.plan.monthly)) * 100)} % vkladu</div>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Weekly({ r, isPrem }: { r: Report; isPrem: boolean }) {
+  const strategy = useFolioStore((s) => s.strategy);
+  const startBuilder = useFolioStore((s) => s.startBuilder);
+  const setReportTab = useFolioStore((s) => s.setReportTab);
+  const offCount = r.drift.filter((d) => d.status !== "ok").length;
+  return (
+    <>
+      <Hero r={r} eyebrow={`Týden ${r.period}`} title={r.headline}>
+        <MarketStrip r={r} />
+      </Hero>
+
+      <SectionTitle icon="🧭">Co z toho plyne</SectionTitle>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {r.actions.map((a) => (
+          <ActionCard key={a.id} a={a} />
+        ))}
+      </div>
+
+      <SectionTitle
+        icon="🎯"
+        action={<button onClick={startBuilder} className="pressable" style={{ fontSize: 12, fontWeight: 800, color: "var(--limedeep)" }}>Změnit →</button>}
+      >
+        Vs. strategie {strategy.name}
+      </SectionTitle>
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{ fontSize: 12.5, color: "var(--ink2)", marginBottom: 14 }}>
+          {offCount ? `${offCount} ${offCount === 1 ? "třída je" : offCount < 5 ? "třídy jsou" : "tříd je"} mimo toleranci ±${DRIFT_BAND} p.b.` : "Vše v toleranci — portfolio sedí na strategii."} Čárka = cíl, šedé pásmo = tolerance.
+        </div>
+        <AllocationBars rows={r.drift} />
+      </div>
+
+      <SectionTitle icon="📈">Tvé pozice za týden</SectionTitle>
+      <div className="grid two" style={{ gridTemplateColumns: "1fr 1fr" }}>
+        {[
+          { label: "Nejlepší", m: r.movers.best, bg: "var(--limesoft)", fg: "var(--limedeep)" },
+          { label: "Nejslabší", m: r.movers.worst, bg: "var(--coralsoft)", fg: "var(--coral)" },
+        ].map(({ label, m, bg, fg }) => (
+          <div key={label} style={{ background: bg, borderRadius: 16, padding: 14 }}>
+            <LogoTile sym={m.sym} size={30} radius={9} />
+            <div style={{ fontSize: 10, fontWeight: 800, color: "var(--ink2)", textTransform: "uppercase", marginTop: 8 }}>{label}</div>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>{m.sym}</div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: fg }}>{signed(m.change)}</div>
+          </div>
+        ))}
+      </div>
+
+      <Watchlist r={r} />
+
+      {isPrem ? (
+        <>
+          <SectionTitle icon="🛡️">Rizikový profil</SectionTitle>
+          <RiskCard r={r} />
+        </>
+      ) : (
+        <button onClick={() => setReportTab("monthly")} className="card lift" style={{ width: "100%", textAlign: "left", padding: 18, marginTop: 18, display: "flex", alignItems: "center", gap: 12, background: "var(--panel)", color: "var(--panelink)", border: "none" }}>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: "var(--grad-lime)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Icon name="pie" size={19} color="var(--inkfix)" stroke={2.2} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, fontSize: 14.5 }}>Tvůj plán příkupu je připravený</div>
+            <div style={{ fontSize: 12.5, color: "var(--panelsub)" }}>
+              {r.plan.lines.length} {r.plan.lines.length === 1 ? "nákup" : r.plan.lines.length < 5 ? "nákupy" : "nákupů"} za {fmt(r.plan.monthly)} · rizikový profil · Premium
+            </div>
+          </div>
+          <Icon name="chevR" size={18} color="var(--lime)" />
+        </button>
+      )}
+    </>
+  );
+}
+
+function Monthly({ r, isPrem }: { r: Report; isPrem: boolean }) {
+  const setCalc = useFolioStore((s) => s.setCalc);
+  const setPlan = useFolioStore((s) => s.setPlan);
+  const askAI = useFolioStore((s) => s.askAI);
+  const after = useMemo(() => driftAfterPlan(r), [r]);
+  const months = r.plan.monthsToBalance;
+
+  return (
+    <>
+      <Hero r={r} eyebrow={`Plán · ${r.period}`} title={`Rozděl ${fmt(r.plan.monthly)} do ${r.plan.lines.length} ${r.plan.lines.length === 1 ? "nákupu" : "nákupů"}`}>
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,.12)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+            <label htmlFor="monthly" style={{ fontSize: 12, fontWeight: 700, color: "var(--panelsub)" }}>Měsíční vklad</label>
+            <span className="fd" style={{ fontSize: 18, fontWeight: 600, color: "var(--lime)" }}>{fmt(r.plan.monthly)}</span>
+          </div>
+          <input id="monthly" type="range" className="lime" min={50} max={3000} step={50} value={Math.min(3000, Math.max(50, r.plan.monthly))} onChange={(e) => setCalc("monthly", Number(e.target.value))} />
+        </div>
+      </Hero>
+
+      <SectionTitle icon="🛒">Kam poslat tento vklad</SectionTitle>
+      <div style={{ position: "relative", minHeight: isPrem ? undefined : 250 }}>
+        <div style={isPrem ? undefined : { filter: "blur(6px)", pointerEvents: "none", userSelect: "none" }} aria-hidden={!isPrem}>
+          <PlanList r={r} />
+        </div>
+        {!isPrem && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div className="card" style={{ padding: 18, textAlign: "center", maxWidth: 300, boxShadow: "var(--shadow-lg)" }}>
+              <div style={{ fontSize: 26, marginBottom: 6 }}>🔒</div>
+              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>Konkrétní plán je v Premiu</div>
+              <div style={{ fontSize: 12.5, color: "var(--ink2)", lineHeight: 1.5, marginBottom: 12 }}>Částky a nástroje pro každou třídu, přepočítané z tvého portfolia každý měsíc.</div>
+              <button onClick={() => setPlan("premium")} className="pressable" style={{ background: "var(--lime)", color: "var(--inkfix)", fontWeight: 800, fontSize: 13.5, padding: "11px 18px", borderRadius: 12 }}>
+                ✦ Odemknout · 12,90 €/měs
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start", background: "var(--limesoft)", borderRadius: 16, padding: 14, marginTop: 12 }}>
+        <span aria-hidden style={{ fontSize: 18 }}>🧘</span>
+        <div style={{ fontSize: 12.5, lineHeight: 1.55 }}>
+          <b>Jen nákupy, nic neprodáváš.</b> Váhy srovnáváš tím, kam posíláš nové peníze — bez daně z prodeje (časový test 3 roky) a bez poplatků za obchody navíc.
+          {months > 0 ? ` Do tolerance se portfolio dostane zhruba za ${months} ${months === 1 ? "měsíc" : months < 5 ? "měsíce" : "měsíců"}.` : " Portfolio už je v toleranci."}
         </div>
       </div>
+
+      <SectionTitle icon="🎯">Po tomto vkladu</SectionTitle>
+      <div className="card" style={{ padding: 16, ...(isPrem ? {} : { filter: "blur(5px)", pointerEvents: "none" }) }} aria-hidden={!isPrem}>
+        <AllocationBars rows={after} />
+      </div>
+
+      {isPrem && (
+        <>
+          <SectionTitle icon="🛡️">Rizikový profil</SectionTitle>
+          <RiskCard r={r} />
+        </>
+      )}
+
+      <SectionTitle icon="✅">Měsíční checklist</SectionTitle>
+      <div className="card" style={{ padding: 16, fontSize: 13.5, color: "var(--ink2)", lineHeight: 1.8 }}>
+        ✓ Pošli vklad a rozděl ho podle plánu.
+        <br />✓ Nereaguj na denní výkyvy — horizont je roky.
+        <br />✓ Strategii měň jen při velké životní změně.
+      </div>
+
+      <button onClick={() => askAI("Kam poslat měsíční vklad?")} className="card lift" style={{ width: "100%", textAlign: "left", padding: 14, marginTop: 14, display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ width: 38, height: 38, borderRadius: 11, background: "var(--panel)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Icon name="chat" size={18} color="var(--lime)" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>Probrat plán s Folio AI</div>
+          <div style={{ fontSize: 12, color: "var(--ink2)" }}>Zná tvé portfolio i strategii.</div>
+        </div>
+        <Icon name="chevR" size={16} color="var(--ink3)" />
+      </button>
     </>
   );
 }
@@ -231,163 +353,44 @@ function ReportExtras({ monthly }: { monthly: boolean }) {
 export function ReportScreen() {
   const plan = useFolioStore((s) => s.plan);
   const reportTab = useFolioStore((s) => s.reportTab);
-  const reportWhy = useFolioStore((s) => s.reportWhy);
   const setReportTab = useFolioStore((s) => s.setReportTab);
-  const toggleReportWhy = useFolioStore((s) => s.toggleReportWhy);
-  const setPlan = useFolioStore((s) => s.setPlan);
-  const go = useFolioStore((s) => s.go);
-  const calcMonthly = useFolioStore((s) => s.calc.monthly);
-
   const isPrem = plan === "premium";
-  const tab = isPrem ? reportTab || "weekly" : "weekly";
-  const monthly = tab === "monthly";
-
-  const sub = monthly ? "Folio AI · Duben 2025" : "Folio AI · 15.–21. 4.";
-  const title = monthly ? "Měsíční plán" : "Týdenní report";
-  const moves = monthly ? MONTHLY_MOVES : REPORT_MOVES;
-  const summary: [string, string][] = monthly
-    ? [["S&P 500", "+3,8 %"], ["STOXX", "+2,6 %"], ["Zlato", "+4,1 %"], ["BTC", "−7,5 %"]]
-    : [["S&P 500", "+1,4 %"], ["STOXX", "+0,9 %"], ["Zlato", "+0,6 %"], ["BTC", "−2,1 %"]];
-  const sumLabel = monthly ? "Vývoj za měsíc" : "Vývoj za týden";
-  const summaryText = monthly
-    ? "V dubnu akciové trhy pokračovaly v růstu, tažené technologiemi a zdravou šíří trhu. Zlato přidalo přes 4 % na nižší inflaci a slabším dolaru. Dluhopisy se stabilizovaly, krypto korigovalo. Z pohledu měsíce zůstává trend pozitivní — měsíční plán se proto soustředí na disciplinovaný příkup a návrat alokace k cílům."
-    : "Akcie měly silný týden, tažené globálními a US large-cap firmami. Dluhopisová ETF stagnovala při setrvalých výnosech. Zlato vzrostlo na nižší inflaci. Krypto zůstalo volatilní.";
-
-  const tabs: [string, string][] = [["weekly", "Týdenní"], ["monthly", "Měsíční plán"]];
-  const amt = calcMonthly || 500;
+  const kind = reportTab === "monthly" ? "monthly" : "weekly";
+  const r = useReport(kind);
 
   return (
     <div className="fade" style={{ maxWidth: 760, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
-        <div>
-          <div className="sub">{sub}</div>
-          <div className="h1">{title}</div>
-        </div>
-        <div style={{ display: "flex", gap: 4, background: "var(--surface2)", borderRadius: 11, padding: 4 }}>
-          {tabs.map((t) => {
-            const lockedTab = !isPrem && t[0] === "monthly";
-            const active = tab === t[0];
-            return (
-              <button
-                key={t[0]}
-                onClick={() => (lockedTab ? setPlan("premium") : setReportTab(t[0]))}
-                className="pressable"
-                style={{ padding: "9px 16px", borderRadius: 9, fontSize: 13, fontWeight: 700, background: active ? "var(--panel)" : "transparent", color: active ? "var(--lime)" : "var(--ink2)", display: "inline-flex", alignItems: "center", gap: 5 }}
-              >
-                {t[1]}
-                {lockedTab && <Icon name="lock" size={12} color="var(--ink3)" stroke={2.4} />}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <div className="sub">Folio report · {r.period}</div>
+      <div className="h1" style={{ marginBottom: 14 }}>{kind === "monthly" ? "Měsíční plán" : "Týdenní report"}</div>
 
-      {!isPrem && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, background: "var(--limesoft)", border: "1px solid var(--lime)", borderRadius: 14, padding: "12px 15px", marginBottom: 16 }}>
-          <Icon name="sparkles" size={17} color="var(--limedeep)" stroke={2.3} />
-          <div style={{ flex: 1, fontSize: 12.5, lineHeight: 1.45 }}>
-            <b>Ukázka týdenního reportu zdarma.</b> Měsíční plán, dopad na tvé portfolio a hloubková analýza jsou v Premiu.
-          </div>
-        </div>
-      )}
-
-      <div style={{ background: "var(--panel)", borderRadius: 20, padding: 22, marginBottom: 18, color: "var(--panelink)", position: "relative", overflow: "hidden" }}>
-        <div style={{ position: "absolute", top: -30, right: -30, width: 110, height: 110, borderRadius: "50%", background: monthly ? "var(--purple)" : "var(--lime)", opacity: 0.18 }} />
-        <div style={{ position: "relative" }}>
-          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--lime)", marginBottom: 10 }}>{monthly ? "Shrnutí měsíce" : "Shrnutí trhu"}</div>
-          <div style={{ fontSize: 15.5, lineHeight: 1.6, opacity: 0.92, maxWidth: 560 }}>{summaryText}</div>
-          <div style={{ fontSize: 9.5, opacity: 0.55, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".06em", marginTop: 16 }}>{sumLabel}</div>
-          <div style={{ display: "flex", gap: 22, marginTop: 8, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,.12)", flexWrap: "wrap" }}>
-            {summary.map((s) => (
-              <div key={s[0]}>
-                <div style={{ fontSize: 9.5, opacity: 0.55, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".05em" }}>{s[0]}</div>
-                <div style={{ fontSize: 15, fontWeight: 700, marginTop: 2, color: s[1][0] === "−" ? "var(--coral)" : "var(--lime)" }}>{s[1]}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid two">
-        {moves.map((m, i) => {
-          const open = reportWhy === i;
-          const dotBg = m.bg === "var(--lime)" ? "var(--limedeep)" : m.bg;
+      <div role="tablist" style={{ display: "flex", gap: 4, background: "var(--surface2)", borderRadius: 12, padding: 4, marginBottom: 16 }}>
+        {(
+          [
+            ["weekly", "Týden"],
+            ["monthly", "Plán na měsíc"],
+          ] as const
+        ).map(([id, label]) => {
+          const active = kind === id;
           return (
-            <div key={m.asset} className="card" style={{ padding: 18 }}>
-              <span className="tag" style={{ background: m.bg, color: m.color }}>{m.label}</span>
-              <div className="fd" style={{ fontSize: 18, fontWeight: 500, margin: "10px 0 6px" }}>{m.asset}</div>
-              <div style={{ fontSize: 13.5, color: "var(--ink2)", lineHeight: 1.5, marginBottom: 12 }}>{m.text}</div>
-              <button onClick={() => toggleReportWhy(i)} className="pressable" style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "var(--bg)", border: "1px solid var(--line)", borderRadius: 9, padding: "8px 12px", fontSize: 12.5, fontWeight: 700 }}>
-                <Icon name="help" size={13} color="var(--ink)" /> Proč? <Icon name="chevD" size={13} color="var(--ink)" />
-              </button>
-              {open && (
-                <div style={{ marginTop: 12, padding: 14, background: "var(--bg)", borderRadius: 12 }}>
-                  {m.why.map((w, wi) => (
-                    <div key={w} style={{ display: "flex", gap: 8, marginBottom: wi < m.why.length - 1 ? 7 : 0 }}>
-                      <span style={{ width: 5, height: 5, borderRadius: "50%", background: dotBg, marginTop: 7, flexShrink: 0 }} />
-                      <span style={{ fontSize: 13, lineHeight: 1.4 }}>{w}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <button
+              key={id}
+              role="tab"
+              aria-selected={active}
+              onClick={() => setReportTab(id)}
+              className="pressable"
+              style={{ flex: 1, padding: "9px 10px", borderRadius: 9, fontSize: 13, fontWeight: 800, background: active ? "var(--surface)" : "transparent", color: active ? "var(--ink)" : "var(--ink2)", boxShadow: active ? "var(--shadow)" : "none", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5 }}
+            >
+              {label}
+              {id === "monthly" && !isPrem && <Icon name="lock" size={12} color="var(--ink3)" stroke={2.4} />}
+            </button>
           );
         })}
       </div>
 
-      {monthly && (
-        <div className="card" style={{ padding: 22, marginTop: 18 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-            <Icon name="pie" size={17} color="var(--limedeep)" />
-            <div style={{ fontWeight: 800, fontSize: 15 }}>Plán měsíčního příkupu</div>
-          </div>
-          <div style={{ fontSize: 13, color: "var(--ink2)", marginBottom: 14 }}>
-            Jak rozdělit tvůj měsíční vklad <b>{fmt(amt)}</b> podle cílové strategie <b>{STRAT.name}</b>.
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
-            <div className="cwrap" style={{ width: 150, height: 150, flexShrink: 0 }}>
-              <Donut data={STRAT.alloc} inner={0.62} />
-            </div>
-            <div style={{ flex: 1, minWidth: 200 }}>
-              {STRAT.alloc.map((a) => (
-                <div key={a[0]} style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
-                  <span style={{ width: 9, height: 9, borderRadius: 3, background: CAT_COLOR[a[0] as AssetCategory], flexShrink: 0 }} />
-                  <span style={{ fontSize: 12.5, flex: 1 }}>{a[0]}</span>
-                  <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ink2)" }}>{a[1]} %</span>
-                  <span style={{ fontSize: 13, fontWeight: 800, minWidth: 60, textAlign: "right" }}>{fmt((amt * a[1]) / 100)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          <button onClick={() => go("calc")} className="pressable" style={{ marginTop: 14, background: "var(--panel)", color: "var(--lime)", fontWeight: 700, fontSize: 13, padding: "10px 16px", borderRadius: 11 }}>
-            Změnit částku v kalkulačce →
-          </button>
-        </div>
-      )}
+      {kind === "monthly" ? <Monthly r={r} isPrem={isPrem} /> : <Weekly r={r} isPrem={isPrem} />}
 
-      {monthly ? (
-        <div style={{ background: "var(--purplesoft)", border: "1px solid rgba(123,97,255,.2)", borderRadius: 18, padding: 18, marginTop: 18 }}>
-          <div className="h2" style={{ marginBottom: 10 }}>Měsíční checklist</div>
-          <div style={{ fontSize: 13.5, color: "var(--ink2)", lineHeight: 1.7 }}>
-            ✓ Poslat pravidelný vklad a rozdělit dle plánu výše.<br />
-            ✓ Zkontrolovat, zda žádná třída nepřerostla cíl o více než 5 %.<br />
-            ✓ Nereagovat na denní výkyvy — držet horizont.<br />
-            ✓ Strategii přehodnotit jen při velké životní změně.
-          </div>
-        </div>
-      ) : (
-        <div style={{ background: "var(--coralsoft)", border: "1px solid rgba(255,90,78,.2)", borderRadius: 18, padding: 18, marginTop: 18 }}>
-          <div className="h2" style={{ marginBottom: 10 }}>Co nenavyšovat</div>
-          <div style={{ fontSize: 13.5, color: "var(--ink2)", lineHeight: 1.6 }}>
-            Krypto je na limitu strategie (3 %) — model nepřidává. Růstové akcie se zvýšenou volatilitou se drží, nenavyšují. Technologická expozice je už dostatečná.
-          </div>
-        </div>
-      )}
-
-      {isPrem ? <ReportExtras monthly={monthly} /> : <PremiumTeaser />}
-
-      <div className="disc" style={{ textAlign: "center", marginTop: 18 }}>
-        Tento report je generován z tržních dat a tvé strategie. Je pouze informační a není to personalizované investiční poradenství. Demo.
+      <div className="disc" style={{ textAlign: "center", marginTop: 20 }}>
+        Report je spočítaný z tvých pozic a zvolené strategie. Je informační a vzdělávací — není to investiční doporučení. Tržní data jsou demo.
       </div>
     </div>
   );

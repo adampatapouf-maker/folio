@@ -49,7 +49,7 @@ export function AddAssetSheet() {
             placeholder="Hledat ticker nebo název…"
             value={addSearch}
             onChange={(e) => setAddSearch(e.target.value)}
-            style={{ width: "100%", padding: "11px 14px 11px 40px", borderRadius: 12, border: "1px solid var(--line)", background: "var(--surface2)", color: "var(--ink)", fontSize: 15, outline: "none" }}
+            style={{ width: "100%", padding: "11px 14px 11px 40px", borderRadius: 12, border: "1px solid var(--line)", background: "var(--surface2)", color: "var(--ink)", fontSize: 16, outline: "none" }}
           />
         </div>
         <div style={{ overflowY: "auto", flex: 1, WebkitOverflowScrolling: "touch" }}>

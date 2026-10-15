@@ -17,21 +17,18 @@ const dmSans = DM_Sans({
 
 export const metadata: Metadata = {
   title: "Folio — AI investiční co-pilot",
-  description: "Tvůj klidný investiční společník: týdenní a měsíční report, Folio AI a portfolio na míru.",
-  manifest: "/manifest.webmanifest",
+  description: "Klidný investiční společník: report o tvém portfoliu, plán příkupu a Folio AI.",
+  applicationName: "Folio",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
     title: "Folio",
   },
-  icons: { apple: "/icon.png" },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
   viewportFit: "cover",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#EAEEF5" },

@@ -14,12 +14,17 @@ import type {
   Holding,
   DiscussPost,
   Question,
+  Strategy,
+  AiWidget,
 } from "@/lib/types";
 import { defaultHoldings } from "@/lib/calc/portfolio";
+import { computeBuilder } from "@/lib/calc/builder";
 import { getAsset } from "@/lib/assets";
-import { QZ } from "@/data/builder";
+import { QZ, PROFILES } from "@/data/builder";
 import { QBANK } from "@/data/academy";
+import { STRAT } from "@/data/portfolio";
 import { aiReply } from "@/lib/ai/engine";
+import { buildAiContext } from "@/lib/ai/context";
 import { TUTORIAL } from "@/data/tutorial";
 
 /** Snapshot pushed onto the navigation history stack. */
@@ -36,26 +41,22 @@ interface ToastState {
   id: number;
 }
 
-const TOP_VIEWS: ViewId[] = [
-  "dashboard",
-  "data",
-  "ai",
-  "portfolio",
-  "report",
-  "calc",
-  "academy",
-  "news",
-  "calendar",
-  "discuss",
-  "profile",
-];
-const AI_FREE_LIMIT = 5;
+const TOP_VIEWS: ViewId[] = ["dashboard", "data", "ai", "portfolio", "report", "calc", "academy", "news", "calendar", "discuss", "profile"];
+export const AI_FREE_LIMIT = 5;
+const QUESTIONS_PER_QUIZ = 5;
+
+/** Local calendar day as YYYY-MM-DD (streaks follow the user's day, not UTC). */
+const dayKey = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const toast = (msg: string, emoji?: string): { toast: ToastState } => ({ toast: { msg, emoji, id: Date.now() } });
 
 export interface FolioState {
   // ---- core ----
   view: ViewId;
   plan: Plan;
   theme: Theme;
+  /** The user's target strategy — drives drift, monthly plan, report and AI. */
+  strategy: Strategy;
   // ---- calculator ----
   calc: CalcInputs;
   calcChart: "line" | "bar";
@@ -63,8 +64,11 @@ export interface FolioState {
   // ---- ai ----
   chat: ChatMessage[];
   aiAtt: ChatAttachment[];
+  aiPending: boolean;
   // ---- academy ----
   academy: AcademyState;
+  streak: number;
+  lastQuizDay: string | null;
   // ---- asset / charts ----
   assetView: string | null;
   chartMode: "line" | "candle";
@@ -87,7 +91,7 @@ export interface FolioState {
   dataFilter: string;
   dataSearch: string;
   reportTab: string;
-  reportWhy: number | null;
+  reportWhy: string | null;
   // ---- chrome ----
   notif: boolean;
   moreOpen: boolean;
@@ -112,29 +116,24 @@ export interface FolioState {
   setPlan: (p: Plan) => void;
   setTheme: (t: Theme) => void;
   toggleTheme: () => void;
-  // calc
+  setStrategy: (profileName: string) => void;
+  adoptBuilderResult: () => void;
   setCalc: (k: keyof CalcInputs, v: number) => void;
   setCalcChart: (t: "line" | "bar") => void;
   toggleCompare: (k: string) => void;
-  // tax
   setTax: (k: keyof TaxInputs, v: number) => void;
-  // charts
   setChart: (m: "line" | "candle") => void;
   setTf: (t: string) => void;
   toggleMA: () => void;
-  // ai
-  askAI: (q: string, atts?: ChatAttachment[]) => void;
+  askAI: (q: string, atts?: ChatAttachment[]) => Promise<void>;
   addAtt: (a: ChatAttachment) => void;
   removeAtt: (i: number) => void;
-  // academy
   startQuiz: (topicId: string) => void;
   answerQ: (idx: number) => void;
   startQuizFromWrong: () => void;
-  // builder
   startBuilder: () => void;
   builderAnswer: (qid: string, i: number) => void;
   builderBack: () => void;
-  // portfolio
   togglePfEdit: () => void;
   pfAdjust: (sym: string, delta: number) => void;
   pfRemove: (sym: string) => void;
@@ -142,58 +141,62 @@ export interface FolioState {
   closeAddAsset: () => void;
   pfAdd: (sym: string) => void;
   setAddSearch: (v: string) => void;
-  // filters / tabs
   setPfTab: (t: string) => void;
   setCalFilter: (t: string) => void;
   setDiscFilter: (t: string) => void;
   setDataFilter: (f: string) => void;
   setDataSearch: (v: string) => void;
   setReportTab: (t: string) => void;
-  toggleReportWhy: (i: number) => void;
+  toggleReportWhy: (id: string) => void;
   toggleNotif: () => void;
   toggleMore: () => void;
-  // tutorial / onboarding
   onboardStart: () => void;
   onboardSkip: () => void;
   tutorialNext: () => void;
   tutorialPrev: () => void;
   tutorialEnd: () => void;
   startTutorial: () => void;
-  // social
   postDiscuss: (text: string) => void;
   toggleLike: (id: string) => void;
-  // misc
   showToast: (msg: string, emoji?: string) => void;
   resetState: () => void;
   setHydrated: () => void;
 }
 
-const snapshot = (s: FolioState): NavSnapshot => ({
-  view: s.view,
-  assetView: s.assetView,
-  newsOpen: s.newsOpen,
-  pfTab: s.pfTab,
-});
+const snapshot = (s: FolioState): NavSnapshot => ({ view: s.view, assetView: s.assetView, newsOpen: s.newsOpen, pfTab: s.pfTab });
+const pushHist = (s: FolioState) => [...s.hist, snapshot(s)].slice(-40);
+
+const INITIAL = {
+  view: "dashboard" as ViewId,
+  plan: "free" as Plan,
+  theme: "light" as Theme,
+  strategy: STRAT,
+  calc: { initial: 5000, monthly: 500, rate: 7, years: 20 },
+  calcChart: "line" as const,
+  calcCompare: {} as Record<string, boolean>,
+  chat: [] as ChatMessage[],
+  aiAtt: [] as ChatAttachment[],
+  aiPending: false,
+  academy: { xp: 0, answered: [], wrong: [], session: null, questIdx: 0 } as AcademyState,
+  streak: 0,
+  lastQuizDay: null as string | null,
+  builder: { step: 0, answers: {}, done: false } as BuilderState,
+  tax: { buy: 10000, sell: 14000, months: 18, dip: 6000 },
+  holdings: null as Holding[] | null,
+  myPosts: [] as DiscussPost[],
+  likes: {} as Record<string, boolean>,
+  onboarded: false,
+  tutorialDone: false,
+};
 
 export const useFolioStore = create<FolioState>()(
   persist(
     (set, get) => ({
-      view: "dashboard",
-      plan: "free",
-      theme: "light",
-      calc: { initial: 5000, monthly: 500, rate: 7, years: 20 },
-      calcChart: "line",
-      calcCompare: {},
-      chat: [],
-      aiAtt: [],
-      academy: { xp: 0, answered: [], wrong: [], session: null, questIdx: 0 },
+      ...INITIAL,
       assetView: null,
       chartMode: "line",
       tf: "1M",
       maOn: false,
-      builder: { step: 0, answers: {}, done: false },
-      tax: { buy: 10000, sell: 14000, months: 18, dip: 6000 },
-      holdings: null,
       pfEdit: false,
       pfTab: "overview",
       addAsset: false,
@@ -207,104 +210,117 @@ export const useFolioStore = create<FolioState>()(
       reportWhy: null,
       notif: true,
       moreOpen: false,
-      onboarded: false,
       tutorial: null,
-      tutorialDone: false,
-      myPosts: [],
-      likes: {},
       hist: [],
       toast: null,
       hydrated: false,
 
+      // ---- navigation ----
       go: (v) =>
-        set((s) => {
-          const hist = TOP_VIEWS.includes(v) ? [] : [...s.hist, snapshot(s)].slice(-40);
-          if (!s.onboarded) {
-            return { onboarded: true, view: v, assetView: null, newsOpen: null, moreOpen: false, addAsset: false, hist };
-          }
-          return { view: v, assetView: null, newsOpen: null, moreOpen: false, addAsset: false, hist };
-        }),
-
+        set((s) => ({
+          view: v,
+          onboarded: true,
+          assetView: null,
+          newsOpen: null,
+          moreOpen: false,
+          addAsset: false,
+          hist: TOP_VIEWS.includes(v) ? [] : pushHist(s),
+        })),
       goBack: () =>
         set((s) => {
           if (s.addAsset) return { addAsset: false };
           if (s.moreOpen) return { moreOpen: false };
-          if (!s.hist.length) return {};
+          if (!s.hist.length) return s.view === "dashboard" ? {} : { view: "dashboard", assetView: null, newsOpen: null };
           const hist = [...s.hist];
           const prev = hist.pop()!;
           return { view: prev.view, assetView: prev.assetView, newsOpen: prev.newsOpen, pfTab: prev.pfTab, moreOpen: false, hist };
         }),
-
-      openAsset: (sym) => set((s) => ({ hist: [...s.hist, snapshot(s)].slice(-40), assetView: sym, view: "data", moreOpen: false })),
+      openAsset: (sym) => set((s) => ({ hist: pushHist(s), assetView: sym, view: "data", moreOpen: false })),
       closeAsset: () => get().goBack(),
-      openNews: (idx) => set((s) => ({ hist: [...s.hist, snapshot(s)].slice(-40), newsOpen: idx, view: "newsArticle" })),
+      openNews: (idx) => set((s) => ({ hist: pushHist(s), newsOpen: idx, view: "newsArticle" })),
       closeNews: () => get().goBack(),
 
-      setPlan: (p) => set({ plan: p }),
+      // ---- settings ----
+      setPlan: (p) => set({ plan: p, ...(p === "premium" ? toast("Premium odemčeno (demo)", "✦") : {}) }),
       setTheme: (t) => set({ theme: t }),
       toggleTheme: () => set((s) => ({ theme: s.theme === "dark" ? "light" : "dark" })),
 
-      setCalc: (k, v) => set((s) => ({ calc: { ...s.calc, [k]: Math.max(0, isNaN(v) ? 0 : v) } })),
-      setCalcChart: (t) => set({ calcChart: t }),
-      toggleCompare: (k) =>
+      // ---- strategy ----
+      setStrategy: (name) => {
+        const p = PROFILES[name];
+        if (p) set({ strategy: { name, risk: p.risk, ret: p.ret, vol: p.vol, alloc: p.alloc }, ...toast(`Strategie: ${name}`, "🎯") });
+      },
+      adoptBuilderResult: () =>
         set((s) => {
-          if (s.plan !== "premium") return { view: "calc" };
-          return { calcCompare: { ...s.calcCompare, [k]: !s.calcCompare[k] } };
+          const r = computeBuilder(s.builder.answers);
+          return {
+            strategy: { name: r.name, risk: r.risk, ret: r.ret, vol: r.vol, alloc: r.alloc },
+            ...toast(`Strategie ${r.name} nastavena — report a plán se přepočítaly`, "🎯"),
+          };
         }),
 
-      setTax: (k, v) => set((s) => ({ tax: { ...s.tax, [k]: Number(v) } })),
-
+      // ---- calculator / tax / charts ----
+      setCalc: (k, v) => set((s) => ({ calc: { ...s.calc, [k]: Math.max(0, Number.isFinite(v) ? v : 0) } })),
+      setCalcChart: (t) => set({ calcChart: t }),
+      toggleCompare: (k) => set((s) => (s.plan !== "premium" ? {} : { calcCompare: { ...s.calcCompare, [k]: !s.calcCompare[k] } })),
+      setTax: (k, v) => set((s) => ({ tax: { ...s.tax, [k]: Math.max(0, Number(v) || 0) } })),
       setChart: (m) => set({ chartMode: m }),
       setTf: (t) => set({ tf: t }),
       toggleMA: () => set((s) => ({ maOn: !s.maOn })),
 
-      askAI: (q, atts) =>
-        set((s) => {
-          const used = s.chat.filter((m) => m.r === "user").length;
-          if (s.plan === "free" && used >= AI_FREE_LIMIT) return { view: "ai" };
-          const a0 = atts && atts.length ? atts : null;
-          const reply = aiReply(q, a0);
-          return {
-            view: "ai",
-            chat: [...s.chat, { r: "user", t: q, atts: a0 }, { r: "ai", t: reply.t, widget: reply.widget }],
-            aiAtt: [],
-          };
-        }),
+      // ---- Folio AI ----
+      askAI: async (q, atts) => {
+        const s = get();
+        if (s.aiPending) return;
+        const used = s.chat.filter((m) => m.r === "user").length;
+        set({ view: "ai", moreOpen: false });
+        if (s.plan === "free" && used >= AI_FREE_LIMIT) return;
+
+        const a0 = atts && atts.length ? atts : null;
+        const history = s.chat.map((m) => ({ r: m.r, t: m.t }));
+        const context = buildAiContext(s.holdings ?? defaultHoldings(), s.strategy, s.calc.monthly);
+        set({ chat: [...s.chat, { r: "user", t: q, atts: a0 }], aiAtt: [], aiPending: true });
+
+        let reply: { t: string; widget?: AiWidget };
+        try {
+          const res = await fetch("/api/ai", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ q, atts: a0 ?? undefined, history, context }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          reply = (await res.json()) as { t: string; widget?: AiWidget };
+        } catch {
+          // Offline / server down: answer locally so the chat never dead-ends.
+          reply = aiReply(q, a0, context);
+        }
+        set((cur) => ({ chat: [...cur.chat, { r: "ai", t: reply.t, widget: reply.widget }], aiPending: false }));
+      },
       addAtt: (a) => set((s) => (s.aiAtt.length < 5 ? { aiAtt: [...s.aiAtt, a] } : {})),
       removeAtt: (i) => set((s) => ({ aiAtt: s.aiAtt.filter((_, idx) => idx !== i) })),
 
+      // ---- academy ----
       startQuiz: (topicId) =>
         set((s) => {
           const xp = s.academy.xp;
-          let maxDiff = 1;
-          if (xp >= 100) maxDiff = 2;
-          if (xp >= 250) maxDiff = 3;
+          const maxDiff = xp >= 250 ? 3 : xp >= 100 ? 2 : 1;
           let pool = QBANK.filter((q) => q.diff <= maxDiff);
           if (topicId && topicId !== "all") pool = pool.filter((q) => q.topic === topicId);
-          const wrong = pool.filter((q) => s.academy.wrong.includes(q.id));
-          const fresh = pool.filter((q) => !s.academy.answered.includes(q.id));
-          const chosen: Question[] = [];
-          const freshCopy = [...fresh];
-          for (let i = 0; i < 5; i++) {
-            const pickFrom = freshCopy.length ? freshCopy : wrong.length ? wrong : pool;
-            if (!pickFrom.length) break;
-            const idx = Math.floor(Math.random() * pickFrom.length);
-            const q = pickFrom[idx];
-            if (!q) break;
-            if (!chosen.find((x) => x.id === q.id)) chosen.push(q);
-            const i2 = freshCopy.indexOf(q);
-            if (i2 >= 0) freshCopy.splice(i2, 1);
-          }
-          const hist = s.view !== "quizPlay" && s.view !== "quizResult" ? [...s.hist, snapshot(s)].slice(-40) : s.hist;
+          // Unanswered first, then ones answered wrong, then anything.
+          const shuffle = <T,>(a: T[]) => [...a].sort(() => Math.random() - 0.5);
+          const fresh = shuffle(pool.filter((q) => !s.academy.answered.includes(q.id)));
+          const wrong = shuffle(pool.filter((q) => s.academy.wrong.includes(q.id) && !fresh.includes(q)));
+          const rest = shuffle(pool.filter((q) => !fresh.includes(q) && !wrong.includes(q)));
+          const chosen = [...fresh, ...wrong, ...rest].slice(0, QUESTIONS_PER_QUIZ);
+          if (!chosen.length) return toast("V tomto tématu zatím nejsou otázky", "📚");
+          const hist = s.view !== "quizPlay" && s.view !== "quizResult" ? pushHist(s) : s.hist;
           return { academy: { ...s.academy, session: { topic: topicId, questions: chosen, idx: 0, answers: [] } }, view: "quizPlay", hist };
         }),
-
       answerQ: (idx) =>
         set((s) => {
           const sess = s.academy.session;
-          if (!sess) return {};
-          const q = sess.questions[sess.idx];
-          if (!q) return {};
+          const q = sess?.questions[sess.idx];
+          if (!sess || !q || sess.answers.length > sess.idx) return {};
           const answers = [...sess.answers, idx];
           const answered = s.academy.answered.includes(q.id) ? s.academy.answered : [...s.academy.answered, q.id];
           let wrong = [...s.academy.wrong];
@@ -320,24 +336,40 @@ export const useFolioStore = create<FolioState>()(
           }
           const correct = answers.filter((a, i) => a === sess.questions[i].correct).length;
           if (correct === sess.questions.length) xp += 20;
-          return { academy: { ...s.academy, xp, answered, wrong, session: { ...sess, answers } }, view: "quizResult" };
+          // Daily streak: consecutive days with at least one finished quiz.
+          const today = dayKey();
+          const y = new Date();
+          y.setDate(y.getDate() - 1);
+          const streak = s.lastQuizDay === today ? s.streak : s.lastQuizDay === dayKey(y) ? s.streak + 1 : 1;
+          return { academy: { ...s.academy, xp, answered, wrong, session: { ...sess, answers } }, view: "quizResult", streak, lastQuizDay: today };
         }),
-
       startQuizFromWrong: () =>
         set((s) => {
-          const wrongQs = s.academy.wrong.map((id) => QBANK.find((q) => q.id === id)).filter((q): q is Question => Boolean(q)).slice(0, 5);
+          const wrongQs = s.academy.wrong
+            .map((id) => QBANK.find((q) => q.id === id))
+            .filter((q): q is Question => Boolean(q))
+            .slice(0, QUESTIONS_PER_QUIZ);
           if (!wrongQs.length) return { view: "academy" };
-          return { academy: { ...s.academy, session: { topic: "weak", questions: wrongQs, idx: 0, answers: [] } }, view: "quizPlay" };
+          return { academy: { ...s.academy, session: { topic: "weak", questions: wrongQs, idx: 0, answers: [] } }, view: "quizPlay", hist: pushHist(s) };
         }),
 
-      startBuilder: () => set((s) => ({ hist: [...s.hist, snapshot(s)].slice(-40), builder: { step: 0, answers: {}, done: false }, view: "builder", moreOpen: false })),
+      // ---- builder ----
+      startBuilder: () => set((s) => ({ hist: pushHist(s), builder: { step: 0, answers: {}, done: false }, view: "builder", moreOpen: false })),
       builderAnswer: (qid, i) =>
         set((s) => {
           const answers = { ...s.builder.answers, [qid]: i };
           const idx = QZ.findIndex((q) => q.id === qid);
           if (idx >= QZ.length - 1) {
-            const startTut = !s.onboarded && !s.tutorialDone;
-            return { builder: { ...s.builder, answers, done: true }, onboarded: true, tutorial: startTut ? 0 : s.tutorial };
+            const firstRun = !s.onboarded;
+            // During onboarding the questionnaire *is* the setup, so its result
+            // becomes the strategy right away; later runs are adopted explicitly.
+            const r = firstRun ? computeBuilder(answers) : null;
+            return {
+              builder: { ...s.builder, answers, done: true },
+              onboarded: true,
+              tutorial: firstRun && !s.tutorialDone ? 0 : s.tutorial,
+              ...(r ? { strategy: { name: r.name, risk: r.risk, ret: r.ret, vol: r.vol, alloc: r.alloc } } : {}),
+            };
           }
           return { builder: { ...s.builder, answers, step: idx + 1 } };
         }),
@@ -349,62 +381,49 @@ export const useFolioStore = create<FolioState>()(
           return {};
         }),
 
+      // ---- portfolio editing ----
       togglePfEdit: () => set((s) => ({ pfEdit: !s.pfEdit })),
       pfAdjust: (sym, delta) =>
         set((s) => {
-          const holdings = (s.holdings || defaultHoldings()).map((h) => ({ ...h }));
+          const holdings = (s.holdings ?? defaultHoldings()).map((h) => ({ ...h }));
           const h = holdings.find((x) => x.sym === sym);
           if (!h) return {};
-          const isCrypto = h.cat === "Krypto";
-          const step = isCrypto ? 0.01 : 1;
+          const step = h.cat === "Krypto" ? 0.01 : 1;
           h.units = Math.max(0, Math.round((h.units + delta * step) * 100) / 100);
-          if (h.units <= 0) {
-            get().showToast(sym + " odebráno z portfolia", "🗑️");
-            return { holdings: holdings.filter((x) => x.sym !== sym) };
-          }
+          if (h.units <= 0) return { holdings: holdings.filter((x) => x.sym !== sym), ...toast(`${sym} odebráno z portfolia`, "🗑️") };
           return { holdings };
         }),
       pfRemove: (sym) =>
-        set((s) => {
-          get().showToast(sym + " odebráno z portfolia", "🗑️");
-          return { holdings: (s.holdings || defaultHoldings()).filter((x) => x.sym !== sym) };
-        }),
-      openAddAsset: () => set({ addAsset: true, moreOpen: false }),
+        set((s) => ({ holdings: (s.holdings ?? defaultHoldings()).filter((x) => x.sym !== sym), ...toast(`${sym} odebráno z portfolia`, "🗑️") })),
+      openAddAsset: () => set({ addAsset: true, addSearch: "", moreOpen: false }),
       closeAddAsset: () => set({ addAsset: false }),
       pfAdd: (sym) =>
         set((s) => {
-          const holdings = (s.holdings || defaultHoldings()).map((h) => ({ ...h }));
+          const holdings = (s.holdings ?? defaultHoldings()).map((h) => ({ ...h }));
           const existing = holdings.find((x) => x.sym === sym);
           if (existing) {
-            const isCrypto = existing.cat === "Krypto";
-            existing.units = Math.round((existing.units + (isCrypto ? 0.01 : 1)) * 100) / 100;
-            get().showToast(sym + " navýšeno", "✓");
-            return { holdings, addAsset: false };
+            existing.units = Math.round((existing.units + (existing.cat === "Krypto" ? 0.01 : 1)) * 100) / 100;
+            return { holdings, addAsset: false, ...toast(`${sym} navýšeno`, "✓") };
           }
           const a = getAsset(sym);
           if (!a) return {};
-          const isCrypto = a.cat === "Krypto";
-          holdings.push({ sym, units: isCrypto ? 0.05 : 5, avg: a.price || 1, cat: a.cat });
-          get().showToast(sym + " přidáno do portfolia", "✓");
-          return { holdings, addAsset: false };
+          holdings.push({ sym, units: a.cat === "Krypto" ? 0.05 : 5, avg: a.price || 1, cat: a.cat });
+          return { holdings, addAsset: false, ...toast(`${sym} přidáno do portfolia`, "✓") };
         }),
       setAddSearch: (v) => set({ addSearch: v }),
 
+      // ---- filters / tabs ----
       setPfTab: (t) => set({ pfTab: t }),
       setCalFilter: (t) => set({ calFilter: t }),
       setDiscFilter: (t) => set({ discFilter: t }),
       setDataFilter: (f) => set({ dataFilter: f }),
       setDataSearch: (v) => set({ dataSearch: v }),
-      setReportTab: (t) => set({ reportTab: t }),
-      toggleReportWhy: (i) => set((s) => ({ reportWhy: s.reportWhy === i ? null : i })),
-      toggleNotif: () =>
-        set((s) => {
-          const notif = !s.notif;
-          get().showToast(notif ? "Notifikace zapnuty 🔔" : "Notifikace vypnuty");
-          return { notif };
-        }),
+      setReportTab: (t) => set({ reportTab: t, reportWhy: null }),
+      toggleReportWhy: (id) => set((s) => ({ reportWhy: s.reportWhy === id ? null : id })),
+      toggleNotif: () => set((s) => ({ notif: !s.notif, ...toast(!s.notif ? "Notifikace zapnuty" : "Notifikace vypnuty", !s.notif ? "🔔" : "🔕") })),
       toggleMore: () => set((s) => ({ moreOpen: !s.moreOpen })),
 
+      // ---- onboarding / tutorial ----
       onboardStart: () => set({ hist: [], builder: { step: 0, answers: {}, done: false }, view: "builder" }),
       onboardSkip: () => set((s) => ({ onboarded: true, view: "dashboard", tutorial: s.tutorialDone ? null : 0 })),
       tutorialNext: () =>
@@ -417,15 +436,13 @@ export const useFolioStore = create<FolioState>()(
       tutorialEnd: () => set({ tutorial: null, tutorialDone: true }),
       startTutorial: () => set({ tutorial: 0 }),
 
+      // ---- social ----
       postDiscuss: (text) =>
         set((s) => {
           const v = text.trim();
-          if (!v) {
-            get().showToast("Napiš nejdřív svůj názor 🙂");
-            return {};
-          }
+          if (!v) return toast("Napiš nejdřív svůj názor", "🙂");
           const symMatch = v.match(/\$([A-Z]{1,6})\b/);
-          let sym = symMatch && getAsset(symMatch[1]) ? symMatch[1] : null;
+          const sym = symMatch && getAsset(symMatch[1]) ? symMatch[1] : null;
           const post: DiscussPost = {
             user: "Ty",
             handle: "@ty",
@@ -440,41 +457,38 @@ export const useFolioStore = create<FolioState>()(
             mine: true,
             id: "p" + Date.now(),
           };
-          get().showToast("Příspěvek přidán", "✓");
-          return { myPosts: [post, ...s.myPosts] };
+          return { myPosts: [post, ...s.myPosts], ...toast("Příspěvek přidán", "✓") };
         }),
       toggleLike: (id) => set((s) => ({ likes: { ...s.likes, [id]: !s.likes[id] } })),
 
-      showToast: (msg, emoji) => set({ toast: { msg, emoji, id: Date.now() } }),
+      // ---- misc ----
+      showToast: (msg, emoji) => set(toast(msg, emoji)),
       resetState: () =>
         set({
-          holdings: null,
-          chat: [],
+          ...INITIAL,
           academy: { xp: 0, answered: [], wrong: [], session: null, questIdx: 0 },
-          plan: "free",
-          calcCompare: {},
-          onboarded: false,
           builder: { step: 0, answers: {}, done: false },
-          myPosts: [],
-          likes: {},
-          tutorialDone: false,
-          view: "dashboard",
+          hist: [],
+          tutorial: null,
         }),
       setHydrated: () => set({ hydrated: true }),
     }),
     {
       name: "folio_state_v1",
+      version: 2,
       storage: createJSONStorage(() => localStorage),
-      // Persist the same subset the prototype's saveState() did.
       partialize: (s) => ({
         plan: s.plan,
         theme: s.theme,
+        strategy: s.strategy,
         calc: s.calc,
         calcChart: s.calcChart,
         calcCompare: s.calcCompare,
         holdings: s.holdings,
         chat: s.chat,
         academy: { xp: s.academy.xp, answered: s.academy.answered, wrong: s.academy.wrong, session: null, questIdx: 0 },
+        streak: s.streak,
+        lastQuizDay: s.lastQuizDay,
         builder: s.builder.done ? s.builder : null,
         notif: s.notif,
         onboarded: s.onboarded,
@@ -483,11 +497,14 @@ export const useFolioStore = create<FolioState>()(
         likes: s.likes,
         tutorialDone: s.tutorialDone,
       }),
+      // v1 → v2: strategy was added; older saves get the default.
+      migrate: (persisted) => persisted as Partial<FolioState>,
       merge: (persisted, current) => {
         const p = (persisted || {}) as Partial<FolioState>;
         return {
           ...current,
           ...p,
+          strategy: p.strategy?.alloc?.length ? p.strategy : current.strategy,
           academy: { ...current.academy, ...(p.academy || {}), session: null },
           builder: p.builder || current.builder,
         };

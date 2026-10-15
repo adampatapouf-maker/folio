@@ -51,7 +51,7 @@ export function AppShell() {
           {showOnboarding ? <OnboardingScreen /> : <ScreenRouter />}
         </div>
       </div>
-      <TabBar />
+      {!showOnboarding && <TabBar />}
       <MoreSheet />
       <AddAssetSheet />
       <TutorialOverlay />

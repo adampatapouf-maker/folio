@@ -3,6 +3,26 @@ import { sig } from "@/lib/assets";
 import { STRAT } from "@/data/portfolio";
 import { price } from "@/lib/format";
 import type { AiWidget, ChatAttachment } from "@/lib/types";
+import type { AiContext } from "./context";
+
+const eur = (n: number) => "€" + Math.round(n).toLocaleString("cs-CZ");
+const num = (n: number) => n.toLocaleString("cs-CZ", { maximumFractionDigits: 1 });
+
+/** Grounded answer about the user's own portfolio vs. their strategy. */
+function portfolioAnswer(c: AiContext): string {
+  const off = c.drift.filter((d) => d.status !== "ok");
+  const head = `Tvé portfolio má hodnotu <b>${eur(c.value)}</b> (${c.plPct >= 0 ? "+" : ""}${num(c.plPct)} % od vložení) a sleduje strategii <b>${c.strategy.name}</b>.`;
+  const drift = off.length
+    ? ` Od cíle se nejvíc odchyluje: ${off.slice(0, 3).map((d) => `<b>${d.cat}</b> ${num(d.actual)} % místo ${d.target} %`).join(", ")}.`
+    : " Všechny třídy aktiv jsou v toleranci ±5 p.b. — není potřeba nic měnit.";
+  const plan = c.plan.length
+    ? ` Měsíční vklad ${eur(c.monthly)} by proto podle plánu šel hlavně do: ${c.plan.slice(0, 3).map((l) => `${l.cat} ${eur(l.amount)}${l.sym ? ` ($${l.sym})` : ""}`).join(", ")}.`
+    : "";
+  const tail = off.length && c.monthsToBalance > 0
+    ? ` Jen příkupy (bez prodeje, takže bez daně) vrátí portfolio do pásma zhruba za ${c.monthsToBalance} měs.`
+    : "";
+  return head + drift + plan + tail + " Celý rozpis najdeš v <b>měsíčním plánu</b>. Není to investiční doporučení.";
+}
 
 export interface AiReply {
   t: string;
@@ -17,7 +37,7 @@ export interface AiReply {
  * Folio AI explains and educates — it intentionally never tells the user what
  * to buy or sell.
  */
-export function aiReply(q: string, atts?: ChatAttachment[] | null): AiReply {
+export function aiReply(q: string, atts?: ChatAttachment[] | null, ctx?: AiContext | null): AiReply {
   const l = q.toLowerCase();
   if (atts && atts.length) {
     const hasImg = atts.some((a) => a.kind === "img");
@@ -45,6 +65,12 @@ export function aiReply(q: string, atts?: ChatAttachment[] | null): AiReply {
     return {
       t: "Nemůžu ti říct, jestli konkrétně prodat nebo koupit — to záměrně nedělám. Co ti ale pomůže rozhodnout se sám: vrať se k <b>důvodu</b>, proč aktivum držíš, ke svému <b>horizontu</b> a <b>alokaci</b>. Časté chyby jsou panický prodej v poklesu a hon za tím, co zrovna roste. Pokud se ti změnila teze nebo váha v portfoliu, může dávat smysl rebalancovat — k tomu slouží <b>měsíční report</b>.",
     };
+  if (
+    ctx &&
+    (/\b(moje|mé|můj|moji|mého|mém)\b/.test(l) || /rebalanc|příkup|odchyl|kam (mám )?(poslat|investovat|dát|dávat)/.test(l)) &&
+    !l.includes("postav")
+  )
+    return { t: portfolioAnswer(ctx) };
   if (l.includes("portfolio") || l.includes("postav"))
     return {
       t:
@@ -73,8 +99,10 @@ export function aiReply(q: string, atts?: ChatAttachment[] | null): AiReply {
     return {
       t:
         "<b>Riziko</b> v investování většinou znamená kolísání hodnoty (volatilitu) a šanci na trvalou ztrátu. Snižuješ ho hlavně <b>diverzifikací</b> (víc tříd aktiv), <b>časovým horizontem</b> (delší = méně záleží na výkyvech) a <b>alokací</b> (poměr akcie/dluhopisy). Tvůj profil je <b>" +
-        STRAT.risk.toLowerCase() +
-        "</b>. Pravidlo: investuj jen peníze, které nebudeš potřebovat řekněme 5+ let.",
+        (ctx?.strategy.risk ?? STRAT.risk).toLowerCase() +
+        "</b>" +
+        (ctx ? `; odhadovaná volatilita tvého portfolia je ${num(ctx.risk.vol)} % ročně a krypto tvoří ${num(ctx.risk.cryptoShare)} %` : "") +
+        ". Pravidlo: investuj jen peníze, které nebudeš potřebovat řekněme 5+ let.",
     };
   if (l.includes("daň") || l.includes("daní") || l.includes("zdaň") || l.includes("dph") || l.includes("osvobozen"))
     return {

@@ -26,21 +26,36 @@ interface Insight {
   emoji: string;
 }
 
+/** Local calendar day as YYYY-MM-DD — must match the store's streak bookkeeping. */
+const dayKey = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/** A streak only survives if the last finished quiz was today or yesterday. */
+function effectiveStreak(streak: number, lastQuizDay: string | null, today: string): number {
+  if (!lastQuizDay) return 0;
+  const y = new Date();
+  y.setDate(y.getDate() - 1);
+  return lastQuizDay === today || lastQuizDay === dayKey(y) ? streak : 0;
+}
+
+/** Czech plural: 1 den, 2–4 dny, 5+ dní. */
+const daysLabel = (n: number): string => (n === 1 ? "den" : n >= 2 && n <= 4 ? "dny" : "dní");
+
 function topicMastery(academy: AcademyState, topicId: string): Mastery {
   const all = QBANK.filter((q) => q.topic === topicId);
   const right = all.filter((q) => academy.answered.includes(q.id) && !academy.wrong.includes(q.id)).length;
-  return { right, total: all.length, pct: Math.round((right / all.length) * 100) };
+  return { right, total: all.length, pct: all.length ? Math.round((right / all.length) * 100) : 0 };
 }
 
-function activeQuests(academy: AcademyState): Quest[] {
+function activeQuests(academy: AcademyState, quizToday: boolean): Quest[] {
   const xp = academy.xp;
   const list: Quest[] = [
-    { id: "q1", title: "První kvíz dne", desc: "Dokonči 1 kvíz", target: 1, prog: Math.min(1, academy.session ? 1 : 0), reward: 20 },
+    { id: "q1", title: "První kvíz dne", desc: "Dokonči 1 kvíz", target: 1, prog: quizToday ? 1 : 0, reward: 20 },
     {
       id: "q2",
       title: "Studuj všechna témata",
       desc: "Odpověz alespoň 1 otázku z každého tématu",
-      target: 6,
+      target: TOPICS.length,
       prog: TOPICS.filter((t) => QBANK.some((q) => q.topic === t.id && academy.answered.includes(q.id))).length,
       reward: 50,
     },
@@ -84,20 +99,28 @@ const DIFF_TIER = (diff: 1 | 2 | 3): { soft: string; label: string } =>
 
 export function AcademyScreen() {
   const academy = useFolioStore((s) => s.academy);
+  const streak = useFolioStore((s) => s.streak);
+  const lastQuizDay = useFolioStore((s) => s.lastQuizDay);
   const startQuiz = useFolioStore((s) => s.startQuiz);
   const startQuizFromWrong = useFolioStore((s) => s.startQuizFromWrong);
 
   const xp = academy.xp;
   const tier = xp < 100 ? "Začátečník" : xp < 250 ? "Pokročilý" : "Mistr";
   const tierColor = xp < 100 ? "var(--lime)" : xp < 250 ? "var(--amber)" : "var(--purple)";
+  const tierFrom = xp < 100 ? 0 : 100;
   const nextTier = xp < 100 ? 100 : xp < 250 ? 250 : null;
   const nextLabel = xp < 100 ? "Pokročilý" : xp < 250 ? "Mistr" : null;
-  const tierPct = xp < 100 ? (xp / 100) * 100 : xp < 250 ? ((xp - 100) / 150) * 100 : 100;
+  const tierPct = nextTier ? Math.min(100, ((xp - tierFrom) / (nextTier - tierFrom)) * 100) : 100;
+
+  const today = dayKey(new Date());
+  const quizToday = lastQuizDay === today;
+  const streakDays = effectiveStreak(streak, lastQuizDay, today);
 
   const answeredCount = academy.answered.length;
-  const successPct = Math.round(((answeredCount - academy.wrong.length) / Math.max(1, answeredCount)) * 100);
+  const wrongAnswered = academy.wrong.filter((id) => academy.answered.includes(id)).length;
+  const successPct = answeredCount ? Math.round(((answeredCount - wrongAnswered) / answeredCount) * 100) : 0;
 
-  const quests = activeQuests(academy);
+  const quests = activeQuests(academy, quizToday);
   const insights = unlockedInsights(xp).slice(-3).reverse();
   const wrongCount = academy.wrong.length;
 
@@ -121,17 +144,26 @@ export function AcademyScreen() {
             <div className="fd" style={{ fontSize: 30, fontWeight: 600, color: tierColor, marginTop: 3 }}>
               {tier}
             </div>
-            <div style={{ fontSize: 13, color: "rgba(255,255,255,.7)", marginTop: 2 }}>
-              {xp} XP{nextTier ? ` · ${nextTier - xp} XP do ${nextLabel}` : ""}
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,.7)", marginTop: 2 }}>{xp} XP celkem</div>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                marginTop: 10,
+                padding: "5px 10px",
+                borderRadius: 20,
+                fontSize: 12,
+                fontWeight: 700,
+                background: streakDays > 0 ? "rgba(255,90,78,.18)" : "rgba(255,255,255,.08)",
+                color: streakDays > 0 ? "var(--coral)" : "rgba(255,255,255,.75)",
+              }}
+            >
+              <span aria-hidden>🔥</span>
+              {streakDays > 0 ? `${streakDays} ${daysLabel(streakDays)} v řadě` : "Začni sérii dnes"}
             </div>
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <div style={{ background: "rgba(255,255,255,.06)", borderRadius: 12, padding: "10px 14px", textAlign: "center" }}>
-              <div className="fd" style={{ fontSize: 22, fontWeight: 600, color: "var(--coral)" }}>
-                7
-              </div>
-              <div style={{ fontSize: 10, color: "rgba(255,255,255,.6)", fontWeight: 700 }}>DENNÍ SÉRIE</div>
-            </div>
             <div style={{ background: "rgba(255,255,255,.06)", borderRadius: 12, padding: "10px 14px", textAlign: "center" }}>
               <div className="fd" style={{ fontSize: 22, fontWeight: 600, color: "var(--amber)" }}>
                 {answeredCount}
@@ -146,11 +178,22 @@ export function AcademyScreen() {
             </div>
           </div>
         </div>
-        {nextTier ? (
-          <div style={{ marginTop: 14, height: 7, background: "rgba(255,255,255,.08)", borderRadius: 4, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${tierPct}%`, background: `linear-gradient(to right,${tierColor},var(--lime))` }} />
+        <div style={{ position: "relative", marginTop: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, fontSize: 11.5, fontWeight: 700, marginBottom: 6 }}>
+            <span style={{ color: "rgba(255,255,255,.75)" }}>{nextTier ? `Do úrovně ${nextLabel}` : "Nejvyšší úroveň dosažena"}</span>
+            <span style={{ color: "rgba(255,255,255,.55)" }}>{nextTier ? `${xp} / ${nextTier} XP · zbývá ${nextTier - xp}` : `${xp} XP`}</span>
           </div>
-        ) : null}
+          <div
+            role="progressbar"
+            aria-valuemin={tierFrom}
+            aria-valuemax={nextTier ?? xp}
+            aria-valuenow={xp}
+            aria-label={nextTier ? `Pokrok k úrovni ${nextLabel}` : "Nejvyšší úroveň"}
+            style={{ height: 7, background: "rgba(255,255,255,.08)", borderRadius: 4, overflow: "hidden" }}
+          >
+            <div style={{ height: "100%", width: `${tierPct}%`, background: `linear-gradient(to right,${tierColor},var(--lime))`, transition: "width .4s ease" }} />
+          </div>
+        </div>
       </div>
 
       {/* weak spots banner */}
@@ -187,29 +230,27 @@ export function AcademyScreen() {
       <div className="h2" style={{ fontSize: 20, marginBottom: 12 }}>
         Témata
       </div>
-      <div className="grid three" style={{ marginBottom: 24 }}>
+      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 24 }}>
         {TOPICS.map((t) => {
           const m = topicMastery(academy, t.id);
           return (
-            <button key={t.id} onClick={() => startQuiz(t.id)} className="card" style={{ padding: 18, textAlign: "left", position: "relative", overflow: "hidden" }}>
-              <div style={{ position: "absolute", top: -30, right: -30, width: 90, height: 90, borderRadius: "50%", background: t.color, opacity: 0.18 }} />
-              <div style={{ position: "relative" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                  <div style={{ width: 46, height: 46, borderRadius: 12, background: t.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>{t.emoji}</div>
-                  <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800, background: "var(--surface2)", color: "var(--ink)", padding: "3px 8px", borderRadius: 6 }}>
-                    {m.right}/{m.total}
-                  </span>
-                </div>
-                <div style={{ fontWeight: 700, fontSize: 15.5, marginBottom: 6, lineHeight: 1.2 }}>{t.name}</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <div style={{ flex: 1, height: 6, background: "var(--surface2)", borderRadius: 3, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${m.pct}%`, background: t.color }} />
-                  </div>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: "var(--ink2)" }}>{m.pct} %</span>
-                </div>
-                <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--ink2)", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  Hrát kvíz <Icon name="chevR" size={12} color="var(--ink2)" />
-                </div>
+            <button
+              key={t.id}
+              onClick={() => startQuiz(t.id)}
+              className="card pressable"
+              aria-label={`${t.name} — zvládnuto ${m.right} z ${m.total}, hrát kvíz`}
+              style={{ padding: 12, textAlign: "left", display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
+                <div style={{ width: 34, height: 34, borderRadius: 10, background: t.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, flexShrink: 0 }}>{t.emoji}</div>
+                <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 800, color: "var(--ink2)" }}>
+                  {m.right}/{m.total}
+                </span>
+                <Icon name="chevR" size={12} color="var(--ink3)" />
+              </div>
+              <div style={{ fontWeight: 700, fontSize: 13.5, lineHeight: 1.25, minHeight: 34, display: "flex", alignItems: "center" }}>{t.name}</div>
+              <div style={{ width: "100%", height: 4, background: "var(--surface2)", borderRadius: 2, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${m.pct}%`, background: t.color }} />
               </div>
             </button>
           );

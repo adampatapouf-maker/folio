@@ -1,6 +1,5 @@
 "use client";
 import { useFolioStore } from "@/store/useFolioStore";
-import { BuilderPaywall } from "@/components/ui/Paywall";
 
 import { DashboardScreen } from "@/screens/DashboardScreen";
 import { DataScreen } from "@/screens/DataScreen";
@@ -21,14 +20,9 @@ import { TaxScreen } from "@/screens/TaxScreen";
 export function ScreenRouter() {
   const view = useFolioStore((s) => s.view);
   const assetView = useFolioStore((s) => s.assetView);
-  const plan = useFolioStore((s) => s.plan);
-  const onboarded = useFolioStore((s) => s.onboarded);
 
   // The data view doubles as the asset-detail host.
   if (view === "data" && assetView) return <AssetDetailScreen sym={assetView} />;
-
-  // Builder requires premium once past onboarding.
-  if (view === "builder" && plan === "free" && onboarded) return <BuilderPaywall />;
 
   switch (view) {
     case "dashboard":

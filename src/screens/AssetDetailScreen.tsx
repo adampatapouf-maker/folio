@@ -1,15 +1,17 @@
 "use client";
 import { useFolioStore } from "@/store/useFolioStore";
-import { getAsset, sig, catColor, catEmoji, onColor, assetNews } from "@/lib/assets";
+import { getAsset, sig, catColor, onColor, assetNews } from "@/lib/assets";
 import { NEWS_IMG } from "@/data/assetNews";
 import { tfSeries } from "@/lib/calc/series";
 import { TFS } from "@/data/misc";
-import { price } from "@/lib/format";
+import { fmt, price } from "@/lib/format";
+import { useHoldings, usePortfolioInsights } from "@/hooks/useInsights";
+import type { DriftRow, PlanLine } from "@/lib/insights/rebalance";
 import { Icon } from "@/components/ui/Icon";
 import { LogoTile } from "@/components/ui/LogoTile";
 import { RichText } from "@/components/ui/RichText";
 import { AreaChart, CandleChart } from "@/components/charts/Charts";
-import type { AssetDetail, AssetKind, AssetCategory } from "@/lib/types";
+import type { AssetDetail, AssetKind, AssetCategory, PortfolioRow } from "@/lib/types";
 import type { ReactNode } from "react";
 
 /** Format a price: big numbers rounded with cs-CZ grouping, else 2dp. */
@@ -73,28 +75,127 @@ function assetKind(a: AssetDetail): AssetKind {
   return "stock";
 }
 
+const DRIFT_COPY: Record<DriftRow["status"], { text: string; color: string; bg: string }> = {
+  over: { text: "nad cílem — strategie nedoporučuje navyšovat", color: "var(--amber)", bg: "var(--ambersoft)" },
+  under: { text: "pod cílem — je v plánu příkupu", color: "var(--blue)", bg: "var(--bluesoft)" },
+  ok: { text: "v cíli", color: "var(--limedeep)", bg: "var(--limesoft)" },
+};
+
+const fmtUnits = (n: number) => n.toLocaleString("cs-CZ", { maximumFractionDigits: 4 });
+
+/** "Ve tvém portfoliu" — the user's position + how the asset's class sits vs. their strategy. */
+function PortfolioFit({
+  sym,
+  cat,
+  cc,
+  row,
+  weight,
+  driftRow,
+  planLine,
+  strategyName,
+  onAdd,
+}: {
+  sym: string;
+  cat: AssetCategory;
+  cc: string;
+  row: PortfolioRow | undefined;
+  weight: number;
+  driftRow: DriftRow | undefined;
+  planLine: PlanLine | undefined;
+  strategyName: string;
+  onAdd: () => void;
+}) {
+  const dc = driftRow ? DRIFT_COPY[driftRow.status] : null;
+  const stats: [string, ReactNode][] = row
+    ? [
+        ["Kusů", fmtUnits(row.units)],
+        ["Hodnota", fmt(row.mv)],
+        [
+          "Zisk/ztráta",
+          <span key="pl" style={{ color: row.plPct >= 0 ? "var(--limedeep)" : "var(--coral)" }}>
+            {row.plPct >= 0 ? "+" : ""}
+            {row.plPct.toFixed(1)} %
+          </span>,
+        ],
+        ["Váha", weight.toFixed(1) + " %"],
+      ]
+    : [];
+  return (
+    <div className="card" style={{ padding: "18px 20px", marginBottom: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <Icon name="wallet" size={17} color={cc} stroke={2} />
+        <span style={{ fontWeight: 800, fontSize: 14 }}>Ve tvém portfoliu</span>
+        {row && (
+          <span className="chip" style={{ marginLeft: "auto", background: "var(--limesoft)", color: "var(--limedeep)", padding: "2px 8px", fontSize: 10 }}>
+            držíš
+          </span>
+        )}
+      </div>
+
+      {row ? (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 8, marginBottom: 12 }}>
+            {stats.map(([k, v]) => (
+              <div key={k} style={{ background: "var(--surface2)", borderRadius: 11, padding: "9px 6px", textAlign: "center", minWidth: 0 }}>
+                <div style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".04em", color: "var(--ink3)" }}>{k}</div>
+                <div className="fd" style={{ fontSize: 14, fontWeight: 600, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--ink3)", marginBottom: 12 }}>
+            Průměrná nákupní cena €{price(row.avg)} · aktuálně €{price(row.price)}
+          </div>
+        </>
+      ) : (
+        <div style={{ fontSize: 13, color: "var(--ink2)", lineHeight: 1.5, marginBottom: 12 }}>
+          {sym} zatím nedržíš. Podívej se, jak by zapadlo do tvé strategie.
+        </div>
+      )}
+
+      {driftRow && dc ? (
+        <div style={{ background: dc.bg, borderRadius: 12, padding: "11px 13px", fontSize: 13, lineHeight: 1.5 }}>
+          <b>Třída {cat}:</b> {Math.round(driftRow.actual)} % vs. cíl {driftRow.target} % —{" "}
+          <span style={{ fontWeight: 700, color: dc.color }}>{dc.text}</span>
+          {planLine && (
+            <div style={{ fontSize: 12, color: "var(--ink2)", marginTop: 4 }}>
+              Měsíční plán počítá s {fmt(planLine.amount)} právě do {sym}.
+            </div>
+          )}
+        </div>
+      ) : (
+        <div style={{ background: "var(--surface2)", borderRadius: 12, padding: "11px 13px", fontSize: 13, lineHeight: 1.5, color: "var(--ink2)" }}>
+          Třída {cat} není součástí strategie {strategyName} (cíl 0 %).
+        </div>
+      )}
+
+      {!row && (
+        <button
+          onClick={onAdd}
+          className="pressable"
+          style={{ width: "100%", marginTop: 12, background: cc, color: onColor(cc), fontSize: 13.5, fontWeight: 800, padding: "11px 14px", borderRadius: 12, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+        >
+          <Icon name="plus" size={15} color={onColor(cc)} stroke={2.3} /> Přidat do portfolia
+        </button>
+      )}
+      <div style={{ fontSize: 11, color: "var(--ink3)", marginTop: 10 }}>Porovnání s tvou strategií {strategyName}. Nejde o doporučení k nákupu ani prodeji.</div>
+    </div>
+  );
+}
+
 export function AssetDetailScreen({ sym }: { sym: string }) {
   const tf = useFolioStore((s) => s.tf);
   const chartMode = useFolioStore((s) => s.chartMode);
-  const maOn = useFolioStore((s) => s.maOn);
   const setTf = useFolioStore((s) => s.setTf);
   const setChart = useFolioStore((s) => s.setChart);
-  const toggleMA = useFolioStore((s) => s.toggleMA);
-  const closeAsset = useFolioStore((s) => s.closeAsset);
   const askAI = useFolioStore((s) => s.askAI);
   const pfAdd = useFolioStore((s) => s.pfAdd);
+  const holdings = useHoldings();
+  const { p, strategy, drift, plan } = usePortfolioInsights();
 
   const a = getAsset(sym);
   if (!a) {
     return (
       <div className="fade" style={{ maxWidth: 980, margin: "0 auto" }}>
-        <button
-          onClick={() => closeAsset()}
-          className="pressable"
-          style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: "var(--ink2)", marginBottom: 14 }}
-        >
-          <Icon name="chevL" size={16} color="var(--ink2)" /> Zpět na data aktiv
-        </button>
         <div className="card" style={{ padding: "36px 20px", textAlign: "center" }}>
           <div style={{ fontSize: 40, marginBottom: 10 }}>🔍</div>
           <div style={{ fontWeight: 700, fontSize: 15 }}>Aktivum nenalezeno</div>
@@ -129,15 +230,15 @@ export function AssetDetailScreen({ sym }: { sym: string }) {
   // news
   const news = assetNews(sym);
 
+  // position in the user's portfolio + class drift vs. strategy
+  const held = holdings.some((h) => h.sym === a.sym);
+  const pfRow = held ? p.rows.find((r) => r.sym === a.sym) : undefined;
+  const weight = pfRow && p.val > 0 ? (pfRow.mv / p.val) * 100 : 0;
+  const driftRow = drift.find((d) => d.cat === a.cat);
+  const planLine = plan.lines.find((l) => l.cat === a.cat && l.sym === a.sym);
+
   return (
     <div className="fade" style={{ maxWidth: 980, margin: "0 auto" }}>
-      <button
-        onClick={() => closeAsset()}
-        className="pressable"
-        style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: "var(--ink2)", marginBottom: 14 }}
-      >
-        <Icon name="chevL" size={16} color="var(--ink2)" /> Zpět na data aktiv
-      </button>
 
       {/* colorful hero header */}
       <div style={{ position: "relative", borderRadius: 24, overflow: "hidden", marginBottom: 18, background: `linear-gradient(135deg,${cc} 0%,${cc}cc 100%)`, color: "#fff", padding: "22px 24px" }}>
@@ -182,15 +283,6 @@ export function AssetDetailScreen({ sym }: { sym: string }) {
             </div>
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-            {chartMode === "line" && (
-              <button
-                onClick={() => toggleMA()}
-                className="pressable"
-                style={{ padding: "6px 11px", borderRadius: 8, fontSize: 12, fontWeight: 700, background: maOn ? "var(--purple)" : "var(--surface2)", color: maOn ? "#fff" : "var(--ink2)", display: "inline-flex", alignItems: "center", gap: 4 }}
-              >
-                〜 MA{maOn ? " ✓" : ""}
-              </button>
-            )}
             <div style={{ display: "flex", background: "var(--surface2)", borderRadius: 10, padding: 3 }}>
               <button
                 onClick={() => setChart("line")}
@@ -212,20 +304,6 @@ export function AssetDetailScreen({ sym }: { sym: string }) {
         <div style={{ height: 250 }}>
           {chartMode === "candle" ? <CandleChart bars={tfData.series} /> : <AreaChart vals={closes} />}
         </div>
-        {chartMode === "line" && (
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 10, fontSize: 11, color: "var(--ink2)" }}>
-            {maOn && (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                <span style={{ width: 14, height: 0, borderTop: "2px dashed var(--purple)" }} />
-                Klouzavý průměr
-              </span>
-            )}
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              <span style={{ width: 9, height: 9, borderRadius: 2, background: "rgba(127,176,0,.5)" }} />
-              Objem obchodů
-            </span>
-          </div>
-        )}
         <div style={{ display: "flex", gap: 4, background: "var(--surface2)", borderRadius: 11, padding: 4, marginTop: 14 }}>
           {TFS.map((t) => (
             <button key={t[0]} className={`tfbtn${tf === t[0] ? " on" : ""}`} onClick={() => setTf(t[0])}>
@@ -243,6 +321,18 @@ export function AssetDetailScreen({ sym }: { sym: string }) {
           ))}
         </div>
       </div>
+
+      <PortfolioFit
+        sym={a.sym}
+        cat={a.cat as AssetCategory}
+        cc={cc}
+        row={pfRow}
+        weight={weight}
+        driftRow={driftRow}
+        planLine={planLine}
+        strategyName={strategy.name}
+        onAdd={() => pfAdd(a.sym)}
+      />
 
       {/* AI score panel */}
       <div style={{ background: "var(--panel)", color: "var(--panelink)", borderRadius: 20, padding: 22, position: "relative", overflow: "hidden", marginBottom: 18 }}>
@@ -262,7 +352,7 @@ export function AssetDetailScreen({ sym }: { sym: string }) {
           <RichText html={a.why} style={{ fontSize: 13.5, lineHeight: 1.6, color: "rgba(255,255,255,.88)" }} />
           <div>
             <button
-              onClick={() => askAI(`Vysvětli skóre ${a.sym}`)}
+              onClick={() => void askAI(`Vysvětli skóre ${a.sym}`)}
               className="pressable"
               style={{ marginTop: 14, background: "var(--lime)", color: "var(--inkfix)", fontSize: 12.5, fontWeight: 700, padding: "9px 14px", borderRadius: 10, display: "inline-flex", alignItems: "center", gap: 5 }}
             >
@@ -281,63 +371,21 @@ export function AssetDetailScreen({ sym }: { sym: string }) {
         <RichText html={a.desc || a.why} style={{ fontSize: 14, lineHeight: 1.6, color: "var(--ink2)" }} />
       </div>
 
-      {/* add to portfolio CTA */}
-      <button
-        onClick={() => pfAdd(a.sym)}
-        className="pressable"
-        style={{ width: "100%", background: cc, color: onColor(cc), fontSize: 14, fontWeight: 800, padding: "13px 16px", borderRadius: 14, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, marginBottom: 18 }}
-      >
-        <Icon name="plus" size={16} color={onColor(cc)} stroke={2.3} /> Přidat do portfolia
-      </button>
-
-      {/* gadgets: score gauge + 52w range */}
-      <div className="grid two" style={{ marginBottom: 18 }}>
-        <div className="card" style={{ padding: "18px 20px", display: "flex", alignItems: "center", gap: 16 }}>
-          <div style={{ width: 78, height: 78, borderRadius: "50%", background: `conic-gradient(${col} ${a.score * 3.6}deg,var(--surface2) 0)`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <div style={{ width: 58, height: 58, borderRadius: "50%", background: "var(--surface)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-              <div className="fd" style={{ fontSize: 24, fontWeight: 700, color: col, lineHeight: 1 }}>{a.score}</div>
-              <div style={{ fontSize: 8, color: "var(--ink3)", fontWeight: 700 }}>/100</div>
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--ink3)" }}>Folio AI skóre</div>
-            <div className="fd" style={{ fontSize: 19, fontWeight: 600, color: col, margin: "2px 0" }}>{lab}</div>
-            <div style={{ fontSize: 12, color: "var(--ink2)" }}>
-              Riziko: <b>{a.risk}</b>
-            </div>
-          </div>
-        </div>
-        <div className="card" style={{ padding: "18px 20px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-            <span style={{ fontSize: 17 }}>📏</span>
-            <span style={{ fontWeight: 800, fontSize: 14 }}>52týdenní rozpětí</span>
-          </div>
-          <div style={{ position: "relative", height: 10, borderRadius: 6, background: `linear-gradient(to right,var(--coral)55,var(--amber)55,var(--limedeep)55)`, margin: "18px 0 6px" }}>
-            <div style={{ position: "absolute", top: "50%", left: `${posPct}%`, transform: "translate(-50%,-50%)", width: 18, height: 18, borderRadius: "50%", background: cc, border: "3px solid var(--surface)", boxShadow: "0 2px 8px rgba(0,0,0,.25)" }} />
-            <div style={{ position: "absolute", top: -22, left: `${posPct}%`, transform: "translateX(-50%)", fontSize: 11, fontWeight: 800, color: cc, whiteSpace: "nowrap" }}>€{price(a.price)}</div>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "var(--ink2)", fontWeight: 600 }}>
-            <span>min €{fmtN(lo)}</span>
-            <span>max €{fmtN(hi)}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* performance chips */}
-      {rets.length > 0 && (
-        <div style={{ marginBottom: 18 }}>
-          <div className="card" style={{ padding: "18px 20px" }}>
+      {/* performance + 52-week range */}
+      <div className="grid two" style={{ marginBottom: 18, alignItems: "stretch" }}>
+        {rets.length > 0 && (
+          <div className="card" style={{ padding: "16px 18px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
               <span style={{ fontSize: 17 }}>🗓️</span>
               <span style={{ fontWeight: 800, fontSize: 14 }}>Výkonnost</span>
             </div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8 }}>
               {rets.map(([k, v]) => {
                 const pos = v >= 0;
                 return (
-                  <div key={k} style={{ flex: 1, minWidth: 64, background: pos ? "var(--limesoft)" : "var(--coralsoft)", borderRadius: 12, padding: "10px 8px", textAlign: "center" }}>
-                    <div style={{ fontSize: 10, fontWeight: 800, color: "var(--ink2)", textTransform: "uppercase", letterSpacing: ".04em" }}>{k}</div>
-                    <div className="fd" style={{ fontSize: 17, fontWeight: 600, marginTop: 2, color: pos ? "var(--limedeep)" : "var(--coral)" }}>
+                  <div key={k} style={{ flex: 1, minWidth: 0, background: pos ? "var(--limesoft)" : "var(--coralsoft)", borderRadius: 12, padding: "9px 4px", textAlign: "center" }}>
+                    <div style={{ fontSize: 9.5, fontWeight: 800, color: "var(--ink2)", textTransform: "uppercase", letterSpacing: ".04em", whiteSpace: "nowrap" }}>{k}</div>
+                    <div className="fd" style={{ fontSize: 16, fontWeight: 600, marginTop: 2, color: pos ? "var(--limedeep)" : "var(--coral)" }}>
                       {pos ? "+" : ""}
                       {v}%
                     </div>
@@ -346,8 +394,22 @@ export function AssetDetailScreen({ sym }: { sym: string }) {
               })}
             </div>
           </div>
+        )}
+        <div className="card" style={{ padding: "16px 18px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 17 }}>📏</span>
+            <span style={{ fontWeight: 800, fontSize: 14 }}>52týdenní rozpětí</span>
+          </div>
+          <div style={{ position: "relative", height: 8, borderRadius: 6, background: "linear-gradient(to right,color-mix(in srgb,var(--coral) 45%,transparent),color-mix(in srgb,var(--amber) 45%,transparent),color-mix(in srgb,var(--limedeep) 45%,transparent))", margin: "30px 0 8px" }}>
+            <div style={{ position: "absolute", top: "50%", left: `${posPct}%`, transform: "translate(-50%,-50%)", width: 16, height: 16, borderRadius: "50%", background: cc, border: "3px solid var(--surface)", boxShadow: "0 2px 8px rgba(0,0,0,.25)" }} />
+            <div style={{ position: "absolute", top: -22, left: `${Math.max(12, Math.min(88, posPct))}%`, transform: "translateX(-50%)", fontSize: 11, fontWeight: 800, color: cc, whiteSpace: "nowrap" }}>€{price(a.price)}</div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, color: "var(--ink2)", fontWeight: 600 }}>
+            <span>min €{fmtN(lo)}</span>
+            <span>max €{fmtN(hi)}</span>
+          </div>
         </div>
-      )}
+      </div>
 
       {/* fundamentals sections */}
       <div className="h2" style={{ fontSize: 20, margin: "4px 0 12px" }}>Kompletní fundamenty</div>

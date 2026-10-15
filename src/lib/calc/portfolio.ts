@@ -50,14 +50,14 @@ export function pfCompute(holdings: Holding[]): PortfolioComputed {
       mv,
       cost,
       pl: mv - cost,
-      plPct: ((mv - cost) / cost) * 100,
+      plPct: cost > 0 ? ((mv - cost) / cost) * 100 : 0,
       chg: (a && a.chg) || 0,
     };
   });
 
   const toAlloc = (o: Record<string, number>): Allocation => {
     const arr = Object.keys(o)
-      .map((k) => [k, (o[k] / val) * 100] as [string, number])
+      .map((k) => [k, val > 0 ? (o[k] / val) * 100 : 0] as [string, number])
       .filter((x) => x[1] > 0.5)
       .sort((a, b) => b[1] - a[1])
       .map((x) => [x[0], Math.round(x[1])] as [string, number]);
@@ -71,7 +71,7 @@ export function pfCompute(holdings: Holding[]): PortfolioComputed {
     val,
     inv,
     pl: val - inv,
-    plPct: ((val - inv) / inv) * 100,
+    plPct: inv > 0 ? ((val - inv) / inv) * 100 : 0,
     allocCat: toAlloc(byCat),
     allocSector: toAlloc(bySector),
     allocCurrency: toAlloc(byCurrency),
@@ -82,6 +82,6 @@ export function pfCompute(holdings: Holding[]): PortfolioComputed {
 /** 12-month value history scaled to end on the live computed value. */
 export function pfHistory(currentVal: number): { m: string; v: number }[] {
   const endF = PF_SHAPE[PF_SHAPE.length - 1].f;
-  const scale = currentVal / endF;
+  const scale = endF > 0 ? currentVal / endF : 0;
   return PF_SHAPE.slice(1).map((s) => ({ m: s.m, v: Math.round(s.f * scale) }));
 }

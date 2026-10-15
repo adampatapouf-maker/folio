@@ -1,28 +1,44 @@
 "use client";
+import { useEffect, useRef, useState } from "react";
 import { useFolioStore } from "@/store/useFolioStore";
 import { TOPICS } from "@/data/academy";
 import { Icon } from "@/components/ui/Icon";
 import { AcademyScreen } from "@/screens/AcademyScreen";
+import type { QuizSession } from "@/lib/types";
 
 const DIFF_TIER = (diff: 1 | 2 | 3): { soft: string; label: string } =>
   diff === 1 ? { soft: "var(--limesoft)", label: "LEHKÁ" } : diff === 2 ? { soft: "var(--ambersoft)", label: "STŘEDNÍ" } : { soft: "var(--coralsoft)", label: "TĚŽKÁ" };
 
 export function QuizPlayScreen() {
   const session = useFolioStore((s) => s.academy.session);
-  const answerQ = useFolioStore((s) => s.answerQ);
-  const go = useFolioStore((s) => s.go);
 
   if (!session || !session.questions.length) return <AcademyScreen />;
+
+  const q = session.questions[session.idx];
+  // Keyed by position + question so the local "chosen" state resets on every new question.
+  return <QuizQuestion key={`${session.idx}-${q.id}`} session={session} />;
+}
+
+function QuizQuestion({ session }: { session: QuizSession }) {
+  const answerQ = useFolioStore((s) => s.answerQ);
+  const go = useFolioStore((s) => s.go);
+  // The store advances idx as soon as answerQ runs, so feedback lives here:
+  // pick → show correct/incorrect + explanation → the button commits the answer.
+  const [chosen, setChosen] = useState<number | null>(null);
+  const feedbackRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (chosen !== null) feedbackRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [chosen]);
 
   const q = session.questions[session.idx];
   const topic = TOPICS.find((t) => t.id === q.topic);
   const topicColor = topic?.color ?? "var(--lime)";
   const totalSteps = session.questions.length;
+  const isLast = session.idx >= totalSteps - 1;
   const dt = DIFF_TIER(q.diff);
-  // The store advances automatically; an answer is recorded for the current
-  // index only if the session was reopened on the same index — render feedback then.
-  const picked = session.answers[session.idx];
-  const answered = picked !== undefined;
+  const answered = chosen !== null;
+  const gotIt = chosen === q.correct;
 
   return (
     <div className="fade" style={{ maxWidth: 680, margin: "0 auto" }}>
@@ -35,19 +51,23 @@ export function QuizPlayScreen() {
       </button>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 18 }}>
-        {session.questions.map((sq, i) => (
-          <div
-            key={sq.id}
-            style={{
-              flex: 1,
-              height: i === session.idx ? 9 : 5,
-              marginTop: i === session.idx ? -2 : 0,
-              background: i < session.idx ? topicColor : "var(--surface2)",
-              borderRadius: 3,
-              ...(i === session.idx ? { border: `2px solid ${topicColor}` } : {}),
-            }}
-          />
-        ))}
+        {session.questions.map((sq, i) => {
+          const current = i === session.idx;
+          const filled = i < session.idx || (current && answered);
+          return (
+            <div
+              key={sq.id}
+              style={{
+                flex: 1,
+                height: current ? 9 : 5,
+                marginTop: current ? -2 : 0,
+                background: filled ? topicColor : "var(--surface2)",
+                borderRadius: 3,
+                ...(current ? { border: `2px solid ${topicColor}` } : {}),
+              }}
+            />
+          );
+        })}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -63,22 +83,24 @@ export function QuizPlayScreen() {
       </div>
 
       {q.opts.map((o, i) => {
-        const isPicked = answered && picked === i;
+        const isPicked = chosen === i;
         const isCorrect = answered && i === q.correct;
+        const isWrongPick = isPicked && !isCorrect;
         let background = "var(--surface)";
         let borderColor = "var(--line)";
         if (isCorrect) {
           background = "var(--limesoft)";
           borderColor = "var(--limedeep)";
-        } else if (isPicked) {
+        } else if (isWrongPick) {
           background = "var(--coralsoft)";
           borderColor = "var(--coral)";
         }
         return (
           <button
-            key={i}
-            onClick={() => answerQ(i)}
+            key={o}
+            onClick={() => setChosen(i)}
             disabled={answered}
+            aria-pressed={isPicked}
             className="pressable"
             style={{
               width: "100%",
@@ -90,13 +112,58 @@ export function QuizPlayScreen() {
               borderRadius: 14,
               fontSize: 15,
               fontWeight: 600,
+              color: "var(--ink)",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              opacity: answered && !isCorrect && !isPicked ? 0.55 : 1,
               transition: ".15s",
             }}
           >
-            {o}
+            <span style={{ flex: 1 }}>{o}</span>
+            {isCorrect && <span style={{ color: "var(--limedeep)", fontWeight: 800 }}>✓</span>}
+            {isWrongPick && <span style={{ color: "var(--coral)", fontWeight: 800 }}>✗</span>}
           </button>
         );
       })}
+
+      {answered && (
+        <div ref={feedbackRef} className="pop" aria-live="polite" style={{ marginTop: 6 }}>
+          <div
+            style={{
+              background: gotIt ? "var(--limesoft)" : "var(--coralsoft)",
+              border: `1px solid ${gotIt ? "var(--limedeep)" : "var(--coral)"}`,
+              borderRadius: 14,
+              padding: "14px 16px",
+              marginBottom: 12,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <span style={{ fontWeight: 800, fontSize: 15, color: gotIt ? "var(--limedeep)" : "var(--coral)" }}>{gotIt ? "✓ Správně!" : "✗ Tentokrát ne"}</span>
+              {gotIt && (
+                <span style={{ marginLeft: "auto", background: "var(--panel)", color: "var(--lime)", fontSize: 11, fontWeight: 800, padding: "3px 8px", borderRadius: 6 }}>+{q.diff * 5} XP</span>
+              )}
+            </div>
+            {!gotIt && (
+              <div style={{ fontSize: 13, marginBottom: 6 }}>
+                <span style={{ fontWeight: 800 }}>Správná odpověď: </span>
+                {q.opts[q.correct]}
+              </div>
+            )}
+            <div style={{ fontSize: 13, color: "var(--ink2)", lineHeight: 1.55 }}>
+              <b>💡 </b>
+              {q.exp}
+            </div>
+          </div>
+          <button
+            onClick={() => answerQ(chosen)}
+            className="pressable"
+            style={{ width: "100%", background: "var(--panel)", color: "var(--lime)", fontWeight: 800, fontSize: 15, padding: 15, borderRadius: 14 }}
+          >
+            {isLast ? "Zobrazit výsledek" : "Další otázka →"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -113,7 +180,8 @@ export function QuizResultScreen() {
   const correct = session.answers.filter((a, i) => a === session.questions[i].correct).length;
   const wrongList = session.questions.map((q, i) => ({ q, picked: session.answers[i] })).filter((x) => x.picked !== x.q.correct);
   const pct = Math.round((correct / total) * 100);
-  const xpGained = correct * 10 + (correct === total ? 20 : 0);
+  // Mirrors the store: diff × 5 XP per correct answer, +20 bonus for a perfect run.
+  const xpGained = session.questions.reduce((sum, q, i) => sum + (session.answers[i] === q.correct ? q.diff * 5 : 0), 0) + (correct === total ? 20 : 0);
   const isPerfect = correct === total;
   const isGood = correct >= total * 0.6;
 

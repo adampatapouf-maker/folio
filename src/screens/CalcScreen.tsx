@@ -2,7 +2,6 @@
 import { useFolioStore } from "@/store/useFolioStore";
 import { computeCompound, projectSeries, projectDIP } from "@/lib/calc/compound";
 import { CALC_COMPARE } from "@/data/calc";
-import { STRAT } from "@/data/portfolio";
 import { fmt } from "@/lib/format";
 import { Icon } from "@/components/ui/Icon";
 import { GrowthChart, CompareChart, type CompareSeries } from "@/components/charts/Charts";
@@ -43,6 +42,7 @@ export function CalcScreen() {
   const toggleCompare = useFolioStore((s) => s.toggleCompare);
   const setPlan = useFolioStore((s) => s.setPlan);
   const askAI = useFolioStore((s) => s.askAI);
+  const strategy = useFolioStore((s) => s.strategy);
 
   const res = computeCompound(initial, monthly, rate, years);
   const isPrem = plan === "premium";
@@ -257,7 +257,7 @@ export function CalcScreen() {
       <div style={{ background: "var(--purplesoft)", borderRadius: 16, padding: 16, marginTop: 18, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <Icon name="sparkles" size={18} color="var(--purple)" />
         <div style={{ flex: 1, minWidth: 200, fontSize: 13.5, lineHeight: 1.5 }}>
-          Kdybys těchto <b>{fmt(monthly)}/měsíc</b> investoval do strategie <b>Vyvážená</b> (očekávaný výnos {STRAT.ret}), model by sledoval tato aktiva. Chceš to probrat?
+          Kdybys těchto <b>{fmt(monthly)}/měsíc</b> investoval podle své strategie <b>{strategy.name}</b> (očekávaný výnos {strategy.ret} p.a.), Folio AI ti ukáže, kam by peníze mířily. Chceš to probrat?
         </div>
         <button onClick={() => askAI(`Kolik vydělám za ${years} let?`)} className="pressable" style={{ background: "var(--purple)", color: "#fff", fontSize: 13, fontWeight: 700, padding: "10px 16px", borderRadius: 11 }}>
           Zeptat se Folio AI

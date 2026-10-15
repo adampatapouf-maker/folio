@@ -1,9 +1,8 @@
 "use client";
-import { useState } from "react";
 import { useFolioStore } from "@/store/useFolioStore";
-import { CALENDAR, BANK_LOGO, CAL_META, CAL_IMG } from "@/data/calendar";
+import { CALENDAR, CAL_META, CAL_IMG } from "@/data/calendar";
 import { Icon } from "@/components/ui/Icon";
-import { LogoTile } from "@/components/ui/LogoTile";
+import { LogoTile, BankTile } from "@/components/ui/LogoTile";
 import type { CalendarEvent, CalendarType } from "@/lib/types";
 
 const FILTERS: [string, string, string][] = [
@@ -13,58 +12,6 @@ const FILTERS: [string, string, string][] = [
   ["divpay", "Výplaty", "💸"],
   ["rate", "Sazby", "🏦"],
 ];
-
-/** Central-bank logo (Clearbit) with a 🏦 fallback. Mirrors `bankLogo()`. */
-function BankLogo({ bank, size = 44 }: { bank: string; size?: number }) {
-  const [failed, setFailed] = useState(false);
-  const domain = BANK_LOGO[bank];
-  const fs = Math.round(size * 0.42);
-
-  if (domain && !failed) {
-    return (
-      <div
-        style={{
-          width: size,
-          height: size,
-          borderRadius: 13,
-          background: "#fff",
-          border: "1px solid rgba(0,0,0,.07)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          flexShrink: 0,
-          overflow: "hidden",
-          boxShadow: "0 3px 9px rgba(0,0,0,.1)",
-        }}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={`https://logo.clearbit.com/${domain}?size=80`}
-          alt=""
-          style={{ width: "72%", height: "72%", objectFit: "contain" }}
-          onError={() => setFailed(true)}
-        />
-      </div>
-    );
-  }
-  return (
-    <div
-      style={{
-        width: size,
-        height: size,
-        borderRadius: 13,
-        background: "linear-gradient(135deg,#7B61FF,#7B61FFcc)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontSize: fs,
-        flexShrink: 0,
-      }}
-    >
-      🏦
-    </div>
-  );
-}
 
 function rateColor(fc?: string, prev?: string): string {
   return parseFloat(fc ?? "") < parseFloat(prev ?? "") ? "var(--limedeep)" : "var(--coral)";
@@ -81,7 +28,7 @@ function EventCard({ e, ei }: { e: CalendarEvent; ei: number }) {
 
   const left =
     e.type === "rate" ? (
-      <BankLogo bank={e.bank ?? ""} size={46} />
+      <BankTile bank={e.bank ?? ""} size={46} radius={13} />
     ) : e.sym ? (
       <LogoTile sym={e.sym} size={46} radius={13} />
     ) : (
@@ -258,7 +205,7 @@ export function CalendarScreen() {
           if (!ev) return null;
           return (
             <div key={b} className="card lift" style={{ flex: "0 0 200px", padding: 16, display: "flex", alignItems: "center", gap: 12 }}>
-              <BankLogo bank={b} size={42} />
+              <BankTile bank={b} size={42} radius={12} />
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 800 }}>{b}</div>
                 <div style={{ fontSize: 11, color: "var(--ink2)" }}>

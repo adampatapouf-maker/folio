@@ -1,8 +1,12 @@
 // AUTO-GENERATED from the Folio prototype. Mock seed data — do not hand-edit;
 // regenerate via scripts/extract.mjs if the source design changes.
 import type { Holding, RankingEntry, Strategy } from "@/lib/types";
+import { PROFILES } from "./builder";
 
-export const STRAT={name:'Vyvážená',risk:'Střední riziko',ret:'6 – 9 %',vol:'11 %',alloc:[['Akciové ETF',50],['Dluhopisové ETF',20],['Konzervativní akcie',10],['Růstové akcie',10],['Komodity',7],['Krypto',3]]} as Strategy;
+// Default target strategy. Derived from the builder's "Vyvážená" profile so the
+// app has exactly one definition of each risk profile (the prototype had two
+// conflicting "Vyvážená" allocations).
+export const STRAT: Strategy = { name: "Vyvážená", ...PROFILES["Vyvážená"] };
 
 export const MY_PORTFOLIO: { name: string; value: number; investedTotal: number; holdings: Holding[] } ={
  name:'Moje portfolio',value:48250,investedTotal:39800,
