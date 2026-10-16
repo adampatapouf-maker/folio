@@ -63,7 +63,8 @@ risk profile, unlimited AI and calculator comparisons.
 
 ## Tech stack
 
-- **Next.js 14** (App Router) + **React 18** + **TypeScript** (strict)
+- **Next.js 16** (App Router, Turbopack) + **React 19** + **TypeScript** (strict)
+- **Cloudflare Workers** hosting via the OpenNext adapter (`@opennextjs/cloudflare`)
 - **Tailwind CSS** with CSS-variable design tokens (light/dark themes)
 - **Zustand** for state, persisted to `localStorage` (key `folio_state_v1`, versioned)
 - **Anthropic SDK** for Folio AI (optional; local fallback engine)
@@ -155,14 +156,52 @@ npm run db:studio     # browse data
 
 ---
 
+## Deploy to Cloudflare Workers
+
+The app runs on Cloudflare Workers through the [OpenNext adapter](https://opennext.js.org/cloudflare).
+Config lives in `wrangler.jsonc` (Worker name `folio`) and `open-next.config.ts`.
+
+```bash
+npm run preview   # build + run locally in the Workers runtime (workerd), http://localhost:8787
+npm run deploy    # build + deploy from your machine (needs `npx wrangler login`)
+```
+
+### Git integration (Workers Builds)
+
+In the Cloudflare dashboard → **Workers & Pages → folio → Settings → Build**:
+
+| Setting | Value |
+| --- | --- |
+| Git branch (production) | `main` |
+| Build command | `npx opennextjs-cloudflare build` |
+| Deploy command | `npx opennextjs-cloudflare deploy -- --keep-vars` |
+| Non-production branch deploy command | `npx opennextjs-cloudflare upload` |
+| Root directory | *(empty)* |
+
+`--keep-vars` keeps variables you set in the dashboard from being wiped on each deploy.
+
+### Runtime secrets
+
+Set these on the Worker (**Settings → Variables and Secrets**) or with
+`npx wrangler secret put ANTHROPIC_API_KEY`:
+
+| Name | Type | Purpose |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | Secret | Enables Claude in Folio AI. Without it the local engine answers. |
+| `FOLIO_AI_MODEL` | Variable (optional) | Overrides the model (default `claude-opus-5-5`). |
+
+The app needs no build-time variables. For local Workers runs, copy
+`.dev.vars.example` to `.dev.vars`.
+
 ## Scripts
 
 | Script | Description |
 | --- | --- |
 | `npm run dev` | Start the dev server |
-| `npm run build` | Production build |
+| `npm run build` | Next.js production build |
+| `npm run preview` / `deploy` / `upload` | Cloudflare Workers: local workerd run / deploy / upload a version |
 | `npm run start` | Run the production build |
-| `npm run lint` | ESLint (next/core-web-vitals) |
+| `npm run lint` | ESLint 10 CLI, flat config (`eslint-config-next`) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | Vitest unit tests (calc + insight engines, AI fallback) |
 | `npm run db:generate` / `db:push` / `db:seed` / `db:studio` | Prisma workflows |

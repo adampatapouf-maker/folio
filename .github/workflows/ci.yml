@@ -31,5 +31,7 @@ jobs:
         run: npm run lint
       - name: Unit tests
         run: npm test
-      - name: Build
-        run: npm run build
+      # Runs `next build` and bundles the result for Cloudflare Workers, so a
+      # green check means the deployable artifact builds too.
+      - name: Build (Next.js + Cloudflare Workers bundle)
+        run: npx opennextjs-cloudflare build

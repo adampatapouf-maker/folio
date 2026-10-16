@@ -35,3 +35,8 @@ yarn-error.log*
 .vscode/*
 !.vscode/extensions.json
 .idea
+
+# cloudflare / opennext
+/.open-next/
+/.wrangler/
+.dev.vars
