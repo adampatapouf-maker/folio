@@ -33,12 +33,22 @@ function Slider({ label, k, min, max, step, val, suffix }: { label: string; k: k
   );
 }
 
+function ChartTypeButton({ t, emo, lbl }: { t: "line" | "bar"; emo: string; lbl: string }) {
+  const chartType = useFolioStore((s) => s.calcChart);
+  const setCalcChart = useFolioStore((s) => s.setCalcChart);
+  const active = chartType === t;
+  return (
+    <button onClick={() => setCalcChart(t)} aria-pressed={active} className="pressable" style={{ flex: 1, padding: "7px 0", borderRadius: 8, fontSize: 12, fontWeight: 800, background: active ? "var(--lime)" : "transparent", color: active ? "var(--inkfix)" : "var(--ink2)" }}>
+      {emo} {lbl}
+    </button>
+  );
+}
+
 export function CalcScreen() {
   const { initial, monthly, rate, years } = useFolioStore((s) => s.calc);
   const chartType = useFolioStore((s) => s.calcChart);
   const cmp = useFolioStore((s) => s.calcCompare);
   const plan = useFolioStore((s) => s.plan);
-  const setCalcChart = useFolioStore((s) => s.setCalcChart);
   const toggleCompare = useFolioStore((s) => s.toggleCompare);
   const setPlan = useFolioStore((s) => s.setPlan);
   const askAI = useFolioStore((s) => s.askAI);
@@ -63,12 +73,6 @@ export function CalcScreen() {
     else s = projectSeries(initial, monthly, c.rate ?? 0, years);
     compareSeries.push({ series: s, color: c.color, label: c.label, dashed: k === "inflation" });
   });
-
-  const CtBtn = ({ t, emo, lbl }: { t: "line" | "bar"; emo: string; lbl: string }) => (
-    <button onClick={() => setCalcChart(t)} className="pressable" style={{ flex: 1, padding: "7px 0", borderRadius: 8, fontSize: 12, fontWeight: 800, background: chartType === t ? "var(--lime)" : "transparent", color: chartType === t ? "var(--inkfix)" : "var(--ink2)" }}>
-      {emo} {lbl}
-    </button>
-  );
 
   return (
     <div className="fade" style={{ maxWidth: 920, margin: "0 auto" }}>
@@ -116,8 +120,8 @@ export function CalcScreen() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 10 }}>
               <div style={{ fontSize: 13, fontWeight: 700 }}>Růst v čase</div>
               <div style={{ display: "flex", gap: 3, background: "var(--surface2)", borderRadius: 10, padding: 3 }}>
-                <CtBtn t="line" emo="📈" lbl="Křivka" />
-                <CtBtn t="bar" emo="📊" lbl="Sloupce" />
+                <ChartTypeButton t="line" emo="📈" lbl="Křivka" />
+                <ChartTypeButton t="bar" emo="📊" lbl="Sloupce" />
               </div>
             </div>
             <div style={{ height: 170 }}>

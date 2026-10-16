@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useFolioStore } from "@/store/useFolioStore";
 import { usePortfolioInsights, useReport } from "@/hooks/useInsights";
 import { pfHistory } from "@/lib/calc/portfolio";
@@ -64,9 +64,9 @@ export function DashboardScreen() {
   const askAI = useFolioStore((s) => s.askAI);
   const setReportTab = useFolioStore((s) => s.setReportTab);
 
-  // Time-dependent copy only after mount, so SSR and client markup match.
-  const [now, setNow] = useState<Date | null>(null);
-  useEffect(() => setNow(new Date()), []);
+  // AppShell renders screens only after client-side rehydration, so reading
+  // the clock here can't cause a server/client markup mismatch.
+  const [now] = useState(() => new Date());
 
   const plUp = p.pl >= 0;
   const hist = pfHistory(p.val);

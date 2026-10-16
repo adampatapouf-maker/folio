@@ -455,6 +455,15 @@ button.card:active,
     transform: translateY(0);
   }
 }
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(20px);
+  }
+}
+.toast-in {
+  animation: toastIn 0.25s ease both;
+}
 .sheet-backdrop {
   animation: sheetFade 0.2s ease;
 }

@@ -64,7 +64,7 @@ writeFileSync(
 // --- calendar.ts ---
 writeFileSync(
   `${OUT}/calendar.ts`,
-  header(`import type { CalendarEvent, CalendarType } from "@/lib/types";`) +
+  header(`import type { CalendarEvent } from "@/lib/types";`) +
     block(624, 637, "CalendarEvent[]") +
     "\n\n" +
     block(638, 638, "Record<string, string>") +

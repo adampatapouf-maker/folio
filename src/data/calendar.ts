@@ -1,6 +1,6 @@
 // AUTO-GENERATED from the Folio prototype. Mock seed data — do not hand-edit;
 // regenerate via scripts/extract.mjs if the source design changes.
-import type { CalendarEvent, CalendarType } from "@/lib/types";
+import type { CalendarEvent } from "@/lib/types";
 
 export const CALENDAR=[
  {date:'2.6.',d:'Po',type:'rate',title:'ECB — rozhodnutí o sazbě',sub:'Evropská centrální banka',bank:'ECB',time:'14:15',impact:3,prev:'4,25 %',fc:'4,00 %'},

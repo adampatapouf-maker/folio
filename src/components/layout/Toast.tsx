@@ -4,18 +4,23 @@ import { useFolioStore } from "@/store/useFolioStore";
 
 export function Toast() {
   const toast = useFolioStore((s) => s.toast);
-  const [visible, setVisible] = useState(false);
+  // Id of the toast whose display time is over; set from the timer callback.
+  const [expiredId, setExpiredId] = useState<number | null>(null);
 
   useEffect(() => {
     if (!toast) return;
-    setVisible(true);
-    const t = setTimeout(() => setVisible(false), 2200);
+    const t = setTimeout(() => setExpiredId(toast.id), 2200);
     return () => clearTimeout(t);
   }, [toast]);
 
+  const visible = !!toast && toast.id !== expiredId;
   if (!toast) return null;
   return (
     <div
+      key={toast.id}
+      role="status"
+      aria-live="polite"
+      className={visible ? "toast-in" : undefined}
       style={{
         position: "absolute",
         left: "50%",

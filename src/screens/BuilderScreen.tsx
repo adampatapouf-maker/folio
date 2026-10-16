@@ -58,23 +58,9 @@ function BuilderQuiz() {
   );
 }
 
-function BuilderResult() {
-  const answers = useFolioStore((s) => s.builder.answers);
-  const startBuilder = useFolioStore((s) => s.startBuilder);
-  const openAsset = useFolioStore((s) => s.openAsset);
-  const askAI = useFolioStore((s) => s.askAI);
-  const go = useFolioStore((s) => s.go);
-  const strategy = useFolioStore((s) => s.strategy);
-  const adoptBuilderResult = useFolioStore((s) => s.adoptBuilderResult);
-  const setReportTab = useFolioStore((s) => s.setReportTab);
-  const r = computeBuilder(answers);
-  const active = strategy.name === r.name && JSON.stringify(strategy.alloc) === JSON.stringify(r.alloc);
-  const showPlan = () => {
-    setReportTab("monthly");
-    go("report");
-  };
-
-  const Block = ({ title, emo, data }: { title: string; emo: string; data: Allocation }) => (
+/** Donut + legend for one breakdown of the model portfolio. */
+function BreakdownBlock({ title, emo, data }: { title: string; emo: string; data: Allocation }) {
+  return (
     <div className="card" style={{ padding: 20 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 12 }}>
         <span style={{ fontSize: 16 }}>{emo}</span>
@@ -96,6 +82,24 @@ function BuilderResult() {
       </div>
     </div>
   );
+}
+
+function BuilderResult() {
+  const answers = useFolioStore((s) => s.builder.answers);
+  const startBuilder = useFolioStore((s) => s.startBuilder);
+  const openAsset = useFolioStore((s) => s.openAsset);
+  const askAI = useFolioStore((s) => s.askAI);
+  const go = useFolioStore((s) => s.go);
+  const strategy = useFolioStore((s) => s.strategy);
+  const adoptBuilderResult = useFolioStore((s) => s.adoptBuilderResult);
+  const setReportTab = useFolioStore((s) => s.setReportTab);
+  const r = computeBuilder(answers);
+  const active = strategy.name === r.name && JSON.stringify(strategy.alloc) === JSON.stringify(r.alloc);
+  const showPlan = () => {
+    setReportTab("monthly");
+    go("report");
+  };
+
 
   return (
     <div className="fade" style={{ maxWidth: 880, margin: "0 auto" }}>
@@ -215,10 +219,10 @@ function BuilderResult() {
         Rozpad portfolia
       </div>
       <div className="grid two" style={{ alignItems: "start", marginBottom: 8 }}>
-        <Block title="Původ aktiv" emo="🌍" data={r.originAlloc} />
-        <Block title="Měny" emo="💱" data={r.currencyAlloc} />
-        <Block title="Sektory" emo="🏭" data={r.sectorAlloc} />
-        <Block title="Konkrétní aktiva" emo="🎯" data={r.specificAlloc} />
+        <BreakdownBlock title="Původ aktiv" emo="🌍" data={r.originAlloc} />
+        <BreakdownBlock title="Měny" emo="💱" data={r.currencyAlloc} />
+        <BreakdownBlock title="Sektory" emo="🏭" data={r.sectorAlloc} />
+        <BreakdownBlock title="Konkrétní aktiva" emo="🎯" data={r.specificAlloc} />
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 18 }}>
