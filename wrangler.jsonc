@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Must match the Worker connected to this repo in the Cloudflare dashboard.
+  "name": "folio",
+  "main": ".open-next/worker.js",
+  // Build the OpenNext bundle before every `wrangler deploy` / `wrangler dev`,
+  // so Cloudflare Workers Builds works even with its default commands
+  // (empty build command + `npx wrangler deploy`). watch_dir keeps `wrangler
+  // dev` from rebuilding in a loop on its own .open-next output.
+  "build": {
+    "command": "npx opennextjs-cloudflare build",
+    "watch_dir": "src"
+  },
+  "compatibility_date": "2026-09-15",
+  // nodejs_compat is required by OpenNext; with a compatibility date after
+  // 2025-04-01 it also exposes vars/secrets on process.env (ANTHROPIC_API_KEY).
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "folio"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
