@@ -161,6 +161,10 @@ npm run db:studio     # browse data
 The app runs on Cloudflare Workers through the [OpenNext adapter](https://opennext.js.org/cloudflare).
 Config lives in `wrangler.jsonc` (Worker name `folio`) and `open-next.config.ts`.
 
+`wrangler.jsonc` has a `build.command`, so every `wrangler dev`, `wrangler deploy`
+and `wrangler versions upload` builds the OpenNext bundle first. No separate
+build step is needed anywhere.
+
 ```bash
 npm run preview   # build + run locally in the Workers runtime (workerd), http://localhost:8787
 npm run deploy    # build + deploy from your machine (needs `npx wrangler login`)
@@ -168,17 +172,19 @@ npm run deploy    # build + deploy from your machine (needs `npx wrangler login`
 
 ### Git integration (Workers Builds)
 
-In the Cloudflare dashboard → **Workers & Pages → folio → Settings → Build**:
+Cloudflare's default commands work as-is. In the dashboard → **Workers & Pages → folio → Settings → Build**:
 
 | Setting | Value |
 | --- | --- |
 | Git branch (production) | `main` |
-| Build command | `npx opennextjs-cloudflare build` |
-| Deploy command | `npx opennextjs-cloudflare deploy -- --keep-vars` |
-| Non-production branch deploy command | `npx opennextjs-cloudflare upload` |
+| Build command | *(empty)* |
+| Deploy command | `npx wrangler deploy --keep-vars` |
+| Non-production branch deploy command | `npx wrangler versions upload` |
 | Root directory | *(empty)* |
 
 `--keep-vars` keeps variables you set in the dashboard from being wiped on each deploy.
+If the build command is set to `npx opennextjs-cloudflare build`, the app still
+deploys; it just builds twice.
 
 ### Runtime secrets
 
@@ -199,7 +205,7 @@ The app needs no build-time variables. For local Workers runs, copy
 | --- | --- |
 | `npm run dev` | Start the dev server |
 | `npm run build` | Next.js production build |
-| `npm run preview` / `deploy` / `upload` | Cloudflare Workers: local workerd run / deploy / upload a version |
+| `npm run preview` / `deploy` / `upload` | Cloudflare Workers (each builds first): local workerd run / deploy / upload a version |
 | `npm run start` | Run the production build |
 | `npm run lint` | ESLint 10 CLI, flat config (`eslint-config-next`) |
 | `npm run typecheck` | `tsc --noEmit` |
