@@ -1,0 +1,8 @@
+{
+  // Used by `next build` (see next.config.mjs). Excludes tests and the Prisma
+  // seed, which import devDependencies that a production-only install (as on
+  // Cloudflare Workers Builds) doesn't have. `npm run typecheck` still checks
+  // everything via tsconfig.json.
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "prisma", "scripts", "**/*.test.ts", "vitest.config.mts"]
+}
